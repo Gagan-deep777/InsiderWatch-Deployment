@@ -1,0 +1,5 @@
+INTERNAL PROJECT STATUS REPORT
+
+Project Orion: Planning and requirements review.
+Project Nova: Development activities in progress.
+Next step: Review milestones with the project lead.
