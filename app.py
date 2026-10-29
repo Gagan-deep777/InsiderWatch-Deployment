@@ -16,6 +16,51 @@ app.secret_key = os.environ.get(
     "INSIDERWATCH_SECRET_KEY", secrets.token_hex(32)
 )
 
+# ---------------------------------------------------------
+# ADMIN DASHBOARD AUTHENTICATION
+# Configure INSIDERWATCH_ADMIN_USER and INSIDERWATCH_ADMIN_PASSWORD
+# in Render Environment settings. Never hard-code credentials here.
+# ---------------------------------------------------------
+ADMIN_USER = os.environ.get("INSIDERWATCH_ADMIN_USER", "")
+ADMIN_PASSWORD = os.environ.get("INSIDERWATCH_ADMIN_PASSWORD", "")
+
+@app.before_request
+def protect_admin_dashboard():
+    path = request.path
+    protected = (
+        path == "/"
+        or path in ("/api/access", "/api/logs", "/api/summary",
+                    "/api/demo", "/api/export", "/api/devices")
+        or path.startswith("/api/admin/")
+    )
+    if not protected:
+        return None
+
+    # Fail closed if administrator credentials are not configured.
+    if not ADMIN_USER or not ADMIN_PASSWORD:
+        app.logger.error(
+            "Admin routes blocked: set INSIDERWATCH_ADMIN_USER and "
+            "INSIDERWATCH_ADMIN_PASSWORD in the environment."
+        )
+        return jsonify({
+            "error": "Admin authentication is not configured."
+        }), 503
+
+    auth = request.authorization
+    supplied_user = auth.username if auth and auth.username else ""
+    supplied_password = auth.password if auth and auth.password else ""
+
+    valid_user = secrets.compare_digest(supplied_user, ADMIN_USER)
+    valid_password = secrets.compare_digest(supplied_password, ADMIN_PASSWORD)
+
+    if not (valid_user and valid_password):
+        response = jsonify({"error": "Administrator authentication required."})
+        response.status_code = 401
+        response.headers["WWW-Authenticate"] = 'Basic realm="InsiderWatch Admin"'
+        return response
+
+    return None
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "insiderwatch_fixed.db")
 PROTECTED_DIR = os.path.join(BASE_DIR, "protected_files")
