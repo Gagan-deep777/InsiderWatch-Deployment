@@ -1,3 +1,67 @@
-CONFIDENTIAL SECURITY REVIEW
+NEXORA TECHNOLOGIES
+INTERNAL SECURITY CONTROL REVIEW
+Document ID: NXT-AUD-044
+Version: 1.0
+Classification: CONFIDENTIAL | Restricted access
+Review period: 01-24 November 2026
+Prepared by: Demonstration Security Review Team
 
-This demonstration document represents an internal security review record. Detailed findings should be shared only with authorized personnel.
+EXECUTIVE SUMMARY
+This is a simulated internal audit report for the InsiderWatch demonstration. It describes test scenarios and expected controls; it is not an independent audit, certification or assessment of a real organisation.
+
+SCOPE
+• Employee login and administrator approval workflow
+• Batch-based file clearance enforcement
+• Access-denial event recording
+• Adaptive threat indicators using a rolling two-minute attempt window
+• Persistent intensive monitoring until administrator clearance
+• Employee account freeze and restoration controls
+• Separation of live 24-hour event view and historical archive
+
+CONTROL TEST RESULTS (DEMO)
+SEC-01 — Individual employee identity
+Expected: each employee signs in using an assigned employee ID.
+Test result: PASS in the demonstration scenario.
+Evidence: employee account records and login request events.
+
+SEC-02 — Least-privilege file access
+Expected: a user cannot read or modify a file above their assigned clearance.
+Test result: PASS in configured Batch A/B/C test cases.
+Evidence: allowed and denied access events.
+
+SEC-03 — Denied-access logging
+Expected: restricted access attempts create an audit event with a timestamp and reason.
+Test result: PASS in the demonstration scenario.
+Evidence: event records in the operational SQLite database.
+
+SEC-04 — Adaptive threat escalation
+Expected: repeated denied attempts in the configured rolling window raise threat severity.
+Test result: PASS in scripted demonstration cases.
+Evidence: threat attempt and monitoring records.
+
+SEC-05 — Persistent monitoring
+Expected: an activated monitor remains active until an administrator clears it.
+Test result: PASS in the demonstration scenario.
+Evidence: threat monitoring state and administrator clearance event.
+
+SEC-06 — Account freeze
+Expected: a frozen employee is blocked from new login and loses access to the employee portal.
+Test result: verify during the live demonstration using a test account.
+Evidence required: freeze audit event, portal denial and restoration record.
+
+SEC-07 — Historical event retention
+Expected: events older than 24 hours are archived separately and remain exportable.
+Test result: verify after the archive process runs.
+Evidence required: matching event IDs in history/insiderwatch_history.db and archive CSV.
+
+OPEN ITEMS
+1. Execute a full end-to-end freeze test with an already authenticated employee session.
+2. Verify restoration is blocked while intensive monitoring remains active.
+3. Confirm archive export includes both historical and current records where required.
+4. Review backup and recovery of both SQLite databases.
+5. Record screenshots and test timestamps for the final project demonstration.
+
+OVERALL CONCLUSION
+The prototype demonstrates role-based access control, audit logging and administrator-led response actions. Test evidence should be collected for every control before presenting it as verified.
+
+Classification and access restriction are part of the project demonstration. All findings and results above are simulated.

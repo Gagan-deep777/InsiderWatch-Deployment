@@ -1,3 +1,41 @@
-NEXORA TECHNOLOGIES - EMPLOYEE HANDBOOK
+NEXORA TECHNOLOGIES
+EMPLOYEE HANDBOOK
+Document ID: NXT-HR-002
+Version: 1.0
+Classification: BASIC | Internal
+Last reviewed: 12 November 2026
+Owner: People Operations
 
-This handbook introduces workplace expectations, communication practices, and employee support resources. Contact Human Resources for official policy questions.
+WELCOME
+Welcome to Nexora Technologies, the fictional demonstration organisation used in the InsiderWatch project. This handbook explains the sample employee experience and basic workplace procedures.
+
+TEAMS
+Engineering: application development, code review and release support.
+Cloud & Infrastructure: hosting, network services, backups and platform reliability.
+Data & AI: data pipelines, analytics and model experimentation.
+Cybersecurity: access reviews, security monitoring and incident coordination.
+Business Operations: procurement, finance administration and project coordination.
+People Operations: onboarding, training and employee support.
+
+WORKING PRACTICES
+• Keep project tickets and documentation up to date.
+• Attend scheduled team reviews and communicate blockers early.
+• Use approved repositories and collaboration tools.
+• Do not place credentials, private keys or customer data in source code.
+• Obtain review before deploying changes to production-like environments.
+
+JOINING AND ROLE CHANGES
+New employees receive a unique employee ID, assigned batch/role and only the access needed for their duties. Managers must request changes when an employee transfers teams or changes responsibilities. Access should be removed promptly when no longer required.
+
+LEAVE AND SUPPORT
+For the demo, leave requests and HR matters are routed to the People Operations team. This file does not define legally binding leave entitlements or employment terms.
+
+SECURITY RESPONSIBILITIES
+Employees must complete security awareness training, protect their login credentials, report suspicious activity and follow document-classification rules. Never test access to restricted files using another person's credentials.
+
+HELP DESK
+IT support: it-support@nexora.example
+Security reporting: security@nexora.example
+People Operations: people@nexora.example
+
+The email addresses use the reserved .example domain and are non-operational. This handbook is illustrative demo material, not a real employment contract.

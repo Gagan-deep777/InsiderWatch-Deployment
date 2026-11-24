@@ -1,5 +1,50 @@
-INTERNAL PROJECT STATUS REPORT
+NEXORA TECHNOLOGIES
+PROJECT PORTFOLIO STATUS REPORT
+Document ID: NXT-PMO-026
+Version: 1.0
+Classification: MEDIUM | Internal
+As of: 24 November 2026
+Prepared by: Project Management Office
 
-Project Orion: Planning and requirements review.
-Project Nova: Development activities in progress.
-Next step: Review milestones with the project lead.
+PORTFOLIO SUMMARY
+This report contains illustrative project data for the InsiderWatch demonstration. It is not a report from a real company.
+
+1. PROJECT ATLAS — SECURE DOCUMENT WORKSPACE
+Status: AMBER | Planned completion: 18 December 2026
+Objective: provide employees with a central document workspace and role-based access.
+Completed: login workflow, employee session handling, file classification and access-denial logging.
+In progress: acceptance testing, audit review and usability refinements.
+Risks: role mapping errors and incomplete test coverage.
+Next milestone: complete Batch A/B/C permission tests.
+
+2. PROJECT BEACON — CLOUD DEPLOYMENT AUTOMATION
+Status: GREEN | Planned completion: 09 January 2027
+Objective: standardise build, test and deployment steps.
+Completed: sample pipeline design and environment checklist.
+In progress: rollback rehearsal and deployment documentation.
+Risks: environment configuration differences.
+Next milestone: record a successful rollback test.
+
+3. PROJECT CEDAR — OPERATIONAL ANALYTICS
+Status: AMBER | Planned completion: 22 January 2027
+Objective: convert approved operational events into useful service metrics.
+Completed: initial metric definitions.
+In progress: data validation and dashboard review.
+Risks: inconsistent timestamps and duplicate events.
+Next milestone: approve metric definitions and data-quality checks.
+
+4. PROJECT DELTA — INSIDERWATCH
+Status: GREEN | Planned completion: 12 December 2026
+Objective: demonstrate employee access monitoring and adaptive threat response.
+Completed: event logging, 24-hour live view, archive database, threat escalation and account freeze/restore workflow.
+In progress: scenario testing and demonstration evidence.
+Risks: test data may be mistaken for real security incidents.
+Next milestone: run the final end-to-end demonstration.
+
+DECISION LOG
+D-026-01: retain the original employee IDs and credentials for the demonstration.
+D-026-02: preserve the existing SQLite operational database during application updates.
+D-026-03: separate current event visibility from long-term event archive storage.
+
+Escalation: unresolved schedule or scope issues go to the project owner and PMO.
+All statuses, dates, project names and decisions are fictional sample content.

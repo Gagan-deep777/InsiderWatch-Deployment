@@ -16,53 +16,11 @@ app.secret_key = os.environ.get(
     "INSIDERWATCH_SECRET_KEY", secrets.token_hex(32)
 )
 
-# ---------------------------------------------------------
-# ADMIN DASHBOARD AUTHENTICATION
-# Configure INSIDERWATCH_ADMIN_USER and INSIDERWATCH_ADMIN_PASSWORD
-# in Render Environment settings. Never hard-code credentials here.
-# ---------------------------------------------------------
-ADMIN_USER = os.environ.get("INSIDERWATCH_ADMIN_USER", "")
-ADMIN_PASSWORD = os.environ.get("INSIDERWATCH_ADMIN_PASSWORD", "")
-
-@app.before_request
-def protect_admin_dashboard():
-    path = request.path
-    protected = (
-        path == "/"
-        or path in ("/api/access", "/api/logs", "/api/summary",
-                    "/api/demo", "/api/export", "/api/devices")
-        or path.startswith("/api/admin/")
-    )
-    if not protected:
-        return None
-
-    # Fail closed if administrator credentials are not configured.
-    if not ADMIN_USER or not ADMIN_PASSWORD:
-        app.logger.error(
-            "Admin routes blocked: set INSIDERWATCH_ADMIN_USER and "
-            "INSIDERWATCH_ADMIN_PASSWORD in the environment."
-        )
-        return jsonify({
-            "error": "Admin authentication is not configured."
-        }), 503
-
-    auth = request.authorization
-    supplied_user = auth.username if auth and auth.username else ""
-    supplied_password = auth.password if auth and auth.password else ""
-
-    valid_user = secrets.compare_digest(supplied_user, ADMIN_USER)
-    valid_password = secrets.compare_digest(supplied_password, ADMIN_PASSWORD)
-
-    if not (valid_user and valid_password):
-        response = jsonify({"error": "Administrator authentication required."})
-        response.status_code = 401
-        response.headers["WWW-Authenticate"] = 'Basic realm="InsiderWatch Admin"'
-        return response
-
-    return None
-
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "insiderwatch_fixed.db")
+HISTORY_DIR = os.path.join(BASE_DIR, "history")
+HISTORY_DB_PATH = os.path.join(HISTORY_DIR, "insiderwatch_history.db")
+EVENTS_VISIBLE_HOURS = 24
 PROTECTED_DIR = os.path.join(BASE_DIR, "protected_files")
 
 # ---------------------------------------------------------
@@ -110,6 +68,11 @@ DEVICE_TOKENS = {
 
 DEVICE_LAST_SEEN = {}
 
+# Adaptive insider-threat rules. Attempts are counted per employee/device
+# inside a rolling window; an activated monitor remains active until admin clear.
+THREAT_WINDOW_SECONDS = 120
+THREAT_ACTIVATION_ATTEMPTS = 3
+
 
 # ---------------------------------------------------------
 # DATABASE
@@ -126,21 +89,43 @@ def init_db():
 
     # Create example files if they don't exist.
     sample_files = {
-        "basic.txt": "NEXORA TECHNOLOGIES\nCompany overview and general information.\nOur mission is to build reliable digital solutions and support secure collaboration.\n",
-        "company_policies.txt": "NEXORA TECHNOLOGIES - COMPANY POLICIES\n\n1. Treat colleagues respectfully.\n2. Use company systems for authorized work.\n3. Protect company information.\n4. Report suspected security issues promptly.\n",
-        "employee_handbook.txt": "NEXORA TECHNOLOGIES - EMPLOYEE HANDBOOK\n\nThis handbook introduces workplace expectations, communication practices, and employee support resources. Contact Human Resources for official policy questions.\n",
-        "medium.txt": "INTERNAL COMPANY INFORMATION\nThis document is intended for internal business use. Share information only with colleagues who need it for their work.\n",
-        "project_status.txt": "INTERNAL PROJECT STATUS REPORT\n\nProject Orion: Planning and requirements review.\nProject Nova: Development activities in progress.\nNext step: Review milestones with the project lead.\n",
-        "it_guidelines.txt": "INTERNAL IT GUIDELINES\n\nUse strong unique passwords. Lock your screen when away. Install approved updates. Do not open unexpected attachments. Report suspicious activity to IT.\n",
-        "confidential.txt": "CONFIDENTIAL COMPANY INFORMATION\nAccess is restricted to employees with appropriate authorization. Do not distribute externally.\n",
-        "security_audit.txt": "CONFIDENTIAL SECURITY REVIEW\n\nThis demonstration document represents an internal security review record. Detailed findings should be shared only with authorized personnel.\n",
-        "financial_summary.txt": "CONFIDENTIAL FINANCIAL SUMMARY\n\nDemonstration-only financial record. Values are illustrative and are not real company financial data. Distribution is restricted.\n"
+        'basic.txt': 'NEXORA TECHNOLOGIES\nCOMPANY PROFILE | GENERAL INFORMATION\nDocument ID: NXT-CORP-001\nVersion: 1.2\nClassification: BASIC | Internal company information\nLast reviewed: 18 November 2026\n\nABOUT THE COMPANY\nNexora Technologies is a fictional technology-services company created for the InsiderWatch security-monitoring demonstration. The company profile, operating figures, projects, clients and policies in this document are illustrative demo data, not claims about a real registered business.\n\nBusiness focus\n• Custom software engineering and web application development\n• Cloud infrastructure, DevOps automation and managed deployment\n• Data engineering, analytics and applied machine learning\n• Cybersecurity assessments and secure document workflows\n• IT support and technology consulting\n\nOperating model\nThe demonstration company is organised into Engineering, Cloud & Infrastructure, Data & AI, Cybersecurity, Business Operations and Human Resources teams. Project work is managed through assigned owners, documented approvals and periodic reviews.\n\nCompany principles\n1. Protect customer and employee information.\n2. Grant access according to role and business need.\n3. Keep systems reliable, monitored and recoverable.\n4. Record important operational and security decisions.\n5. Communicate risks early and resolve them transparently.\n\nInformation handling\nPublic information may be shared externally after approval. Internal documents are for employees. Confidential records are restricted to specifically authorised roles. Never upload company data to personal storage or share credentials.\n\nCONTACT ROUTING (DEMO)\nGeneral enquiries: hello@nexora.example\nIT support: it-support@nexora.example\nSecurity reporting: security@nexora.example\nHuman Resources: people@nexora.example\n\nNote: The .example email domain is reserved for documentation and is not a working mailbox.\n',
+        'company_policies.txt': "NEXORA TECHNOLOGIES\nEMPLOYEE & INFORMATION SECURITY POLICIES\nDocument ID: NXT-POL-010\nVersion: 2.1\nClassification: BASIC | Internal\nEffective date: 01 October 2026\nPolicy owner: Business Operations\n\n1. PURPOSE\nThese policies define the minimum expectations for using company systems, handling information and protecting colleagues, customers and business operations.\n\n2. ACCEPTABLE USE\n• Use company accounts and devices for authorised work.\n• Do not install unapproved software or disable endpoint protections.\n• Lock your screen whenever you leave your workstation.\n• Do not bypass access controls or attempt to access another employee's account.\n• Report lost devices, suspicious messages and unexpected access prompts promptly.\n\n3. IDENTITY AND ACCESS\n• Every employee must use an individual account; shared accounts are prohibited.\n• Passwords must not be shared, reused or stored in plain-text documents.\n• Multi-factor authentication must be enabled wherever supported.\n• Access is granted using least privilege and must be reviewed when duties change.\n• Managers must request access changes through the approved IT process.\n\n4. DATA CLASSIFICATION\nBASIC: General company information and approved internal guidance.\nMEDIUM: Internal project, operational and technical information.\nCONFIDENTIAL: Financial, security, customer-sensitive and restricted business records.\nEmployees must use approved storage and sharing channels appropriate to the classification.\n\n5. INCIDENT REPORTING\nReport suspected phishing, malware, data loss, unauthorised access or account compromise to security@nexora.example. Include the time, affected system and a short description. Do not delete relevant evidence or investigate beyond your authorisation.\n\n6. REMOTE WORK\nUse approved secure connectivity. Avoid public or shared computers. Do not leave company devices unattended in public places. Report remote-access failures to IT rather than disabling security controls.\n\n7. RECORDS AND RETENTION\nOperational and security events are logged by the InsiderWatch demonstration system. The live File Access view displays the latest 24 hours; older event records are archived in the history database. Retention and deletion in a production company must follow its approved legal and records-management policy.\n\n8. POLICY BREACHES\nSuspected breaches are reviewed by the designated administrator and relevant manager. Temporary account restrictions may be applied while facts are established. Restoration requires an authorised decision and a recorded outcome.\n\nApproval: Demonstration policy approved by Nexora Operations.\nReview cycle: Every 12 months or after a material security change.\n\nAll company names, policy owners, dates and processes here are illustrative demo content.\n",
+        'employee_handbook.txt': "NEXORA TECHNOLOGIES\nEMPLOYEE HANDBOOK\nDocument ID: NXT-HR-002\nVersion: 1.0\nClassification: BASIC | Internal\nLast reviewed: 12 November 2026\nOwner: People Operations\n\nWELCOME\nWelcome to Nexora Technologies, the fictional demonstration organisation used in the InsiderWatch project. This handbook explains the sample employee experience and basic workplace procedures.\n\nTEAMS\nEngineering: application development, code review and release support.\nCloud & Infrastructure: hosting, network services, backups and platform reliability.\nData & AI: data pipelines, analytics and model experimentation.\nCybersecurity: access reviews, security monitoring and incident coordination.\nBusiness Operations: procurement, finance administration and project coordination.\nPeople Operations: onboarding, training and employee support.\n\nWORKING PRACTICES\n• Keep project tickets and documentation up to date.\n• Attend scheduled team reviews and communicate blockers early.\n• Use approved repositories and collaboration tools.\n• Do not place credentials, private keys or customer data in source code.\n• Obtain review before deploying changes to production-like environments.\n\nJOINING AND ROLE CHANGES\nNew employees receive a unique employee ID, assigned batch/role and only the access needed for their duties. Managers must request changes when an employee transfers teams or changes responsibilities. Access should be removed promptly when no longer required.\n\nLEAVE AND SUPPORT\nFor the demo, leave requests and HR matters are routed to the People Operations team. This file does not define legally binding leave entitlements or employment terms.\n\nSECURITY RESPONSIBILITIES\nEmployees must complete security awareness training, protect their login credentials, report suspicious activity and follow document-classification rules. Never test access to restricted files using another person's credentials.\n\nHELP DESK\nIT support: it-support@nexora.example\nSecurity reporting: security@nexora.example\nPeople Operations: people@nexora.example\n\nThe email addresses use the reserved .example domain and are non-operational. This handbook is illustrative demo material, not a real employment contract.\n",
+        'medium.txt': 'NEXORA TECHNOLOGIES\nINTERNAL OPERATIONS & SERVICE DELIVERY OVERVIEW\nDocument ID: NXT-OPS-014\nVersion: 1.4\nClassification: MEDIUM | Internal\nReporting period: October-November 2026\nOwner: Operations Office\n\n1. OPERATING SNAPSHOT (ILLUSTRATIVE)\nActive demonstration workstreams: 4\nCore functional teams: 6\nStandard service window: Monday-Friday, 09:00-18:00 IST\nInternal service desk target: acknowledge priority-one incidents within 30 minutes\nThese are sample planning values for the project demonstration, not measured company performance.\n\n2. CURRENT WORKSTREAMS\nProject Atlas — Secure employee document workspace\nStatus: In progress | Owner: Application Engineering\nCurrent milestone: access-control validation and audit-event review\nNext action: complete role-based test cases and obtain reviewer sign-off.\n\nProject Beacon — Cloud deployment automation\nStatus: In progress | Owner: Cloud & Infrastructure\nCurrent milestone: repeatable build and deployment workflow\nNext action: validate rollback procedure and deployment logs.\n\nProject Cedar — Operational analytics\nStatus: Planning | Owner: Data & AI\nCurrent milestone: define approved event fields and dashboard metrics\nNext action: confirm data quality checks and reporting definitions.\n\nProject Delta — InsiderWatch security monitoring\nStatus: Demonstration validation | Owner: Cybersecurity\nCurrent milestone: test denied-access alerts, employee freeze workflow and archive retention\nNext action: execute end-to-end test cases and document findings.\n\n3. CHANGE MANAGEMENT\nEvery material system change should have a request, named owner, risk assessment, test evidence, approval and rollback plan. Emergency changes must be documented retrospectively.\n\n4. SERVICE MANAGEMENT\nIncidents are prioritised by impact and urgency. The service owner records the incident, actions taken, affected services and resolution. Repeated incidents should receive a root-cause review.\n\n5. OPERATIONAL RISKS\n• Unreviewed access permissions\n• Incomplete backup verification\n• Configuration drift between environments\n• Unclear ownership of system alerts\n• Delayed patching of supported software\n\n6. WEEKLY REVIEW CHECKLIST\n[ ] Review open high-priority incidents\n[ ] Check backup job results\n[ ] Review pending access requests\n[ ] Confirm critical changes have rollback plans\n[ ] Assign owners and due dates to unresolved risks\n\nAll project names, statuses, service targets and operating figures are fictional sample data for the InsiderWatch demonstration.\n',
+        'project_status.txt': 'NEXORA TECHNOLOGIES\nPROJECT PORTFOLIO STATUS REPORT\nDocument ID: NXT-PMO-026\nVersion: 1.0\nClassification: MEDIUM | Internal\nAs of: 24 November 2026\nPrepared by: Project Management Office\n\nPORTFOLIO SUMMARY\nThis report contains illustrative project data for the InsiderWatch demonstration. It is not a report from a real company.\n\n1. PROJECT ATLAS — SECURE DOCUMENT WORKSPACE\nStatus: AMBER | Planned completion: 18 December 2026\nObjective: provide employees with a central document workspace and role-based access.\nCompleted: login workflow, employee session handling, file classification and access-denial logging.\nIn progress: acceptance testing, audit review and usability refinements.\nRisks: role mapping errors and incomplete test coverage.\nNext milestone: complete Batch A/B/C permission tests.\n\n2. PROJECT BEACON — CLOUD DEPLOYMENT AUTOMATION\nStatus: GREEN | Planned completion: 09 January 2027\nObjective: standardise build, test and deployment steps.\nCompleted: sample pipeline design and environment checklist.\nIn progress: rollback rehearsal and deployment documentation.\nRisks: environment configuration differences.\nNext milestone: record a successful rollback test.\n\n3. PROJECT CEDAR — OPERATIONAL ANALYTICS\nStatus: AMBER | Planned completion: 22 January 2027\nObjective: convert approved operational events into useful service metrics.\nCompleted: initial metric definitions.\nIn progress: data validation and dashboard review.\nRisks: inconsistent timestamps and duplicate events.\nNext milestone: approve metric definitions and data-quality checks.\n\n4. PROJECT DELTA — INSIDERWATCH\nStatus: GREEN | Planned completion: 12 December 2026\nObjective: demonstrate employee access monitoring and adaptive threat response.\nCompleted: event logging, 24-hour live view, archive database, threat escalation and account freeze/restore workflow.\nIn progress: scenario testing and demonstration evidence.\nRisks: test data may be mistaken for real security incidents.\nNext milestone: run the final end-to-end demonstration.\n\nDECISION LOG\nD-026-01: retain the original employee IDs and credentials for the demonstration.\nD-026-02: preserve the existing SQLite operational database during application updates.\nD-026-03: separate current event visibility from long-term event archive storage.\n\nEscalation: unresolved schedule or scope issues go to the project owner and PMO.\nAll statuses, dates, project names and decisions are fictional sample content.\n',
+        'it_guidelines.txt': 'NEXORA TECHNOLOGIES\nIT OPERATIONS & ENDPOINT SECURITY GUIDELINES\nDocument ID: NXT-IT-008\nVersion: 1.3\nClassification: MEDIUM | Internal\nOwner: IT Operations\nReview date: 20 November 2026\n\n1. ACCOUNT SECURITY\n• Use a unique password for each company service.\n• Enable multi-factor authentication where available.\n• Never share passwords, session cookies, API tokens or recovery codes.\n• Report unexpected MFA prompts immediately.\n• Administrators must use separate privileged accounts for administrative work.\n\n2. DEVICE SECURITY\n• Keep operating systems, browsers and endpoint protection updated.\n• Enable automatic screen locking.\n• Encrypt company laptops where supported.\n• Do not connect unknown USB devices.\n• Report lost or stolen devices as soon as possible.\n\n3. NETWORK AND REMOTE ACCESS\n• Use approved VPN or secure remote-access services.\n• Avoid untrusted public Wi-Fi for sensitive work.\n• Do not expose development servers directly to the public internet without approval.\n• Restrict inbound firewall rules to required ports and trusted sources.\n\n4. SOFTWARE AND DEVELOPMENT\n• Install software from trusted and approved sources.\n• Keep dependencies patched and review security advisories.\n• Do not commit secrets or production data to Git repositories.\n• Review code before merging and test changes before deployment.\n• Store environment-specific secrets outside source code.\n\n5. BACKUP AND RECOVERY\n• Critical data must have scheduled backups.\n• Backup jobs must be monitored for success and failure.\n• Perform periodic restore tests; a backup is not verified until restoration is tested.\n• Document recovery owners, dependencies and recovery priorities.\n\n6. INCIDENT RESPONSE\n1. Report the event to the security team.\n2. Preserve relevant logs and timestamps.\n3. Isolate a suspected compromised endpoint only under authorised guidance.\n4. Reset credentials or revoke sessions through the approved process.\n5. Record containment, recovery and lessons learned.\n\n7. INSIDERWATCH DEMONSTRATION NOTES\nThe local Flask application records activity that passes through its employee portal and authenticated device APIs. It does not inspect unrelated Windows processes or monitor all activity on a laptop. The displayed remote address is the address observed by the Flask server and may be a proxy address in hosted deployments.\n\nSupport: it-support@nexora.example\nSecurity: security@nexora.example\nThese are non-operational example addresses. This document is illustrative demo guidance.\n',
+        'confidential.txt': 'NEXORA TECHNOLOGIES\nRESTRICTED BUSINESS CONTINUITY & SECURITY OPERATING PLAN\nDocument ID: NXT-SEC-031\nVersion: 1.0\nClassification: CONFIDENTIAL | Restricted access\nOwner: Security & Risk Office\nReview date: 24 November 2026\n\nHANDLING INSTRUCTIONS\nThis is a fictional, simulated restricted document created for the InsiderWatch demonstration. It contains no real customer secrets, credentials, financial account details or production infrastructure information. Access is limited in the demo to Batch A.\n\n1. PURPOSE\nDescribe the internal response structure for a suspected compromise affecting employee accounts or business documents.\n\n2. RESPONSE ROLES\nIncident Lead: coordinates response and maintains the incident timeline.\nSystem Owner: validates affected services and recovery requirements.\nSecurity Analyst: reviews relevant access events and indicators.\nPeople Manager: coordinates employee communication through approved channels.\nAdministrator: applies account restrictions and records authorised restoration decisions.\n\n3. ACCOUNT CONTAINMENT\nWhen credible indicators justify temporary containment:\n• Record the reason and evidence supporting the decision.\n• Freeze the affected employee account through the authorised administrative workflow.\n• Confirm the employee portal session is terminated.\n• Reject new login attempts while the account remains frozen.\n• Preserve access logs and relevant timestamps for review.\n• Do not treat an alert alone as proof of misconduct.\n\n4. INVESTIGATION CHECKLIST\n[ ] Confirm the employee identity and affected account.\n[ ] Verify timestamps and the resource involved.\n[ ] Review allowed and denied access events.\n[ ] Check whether the activity has a legitimate business explanation.\n[ ] Record evidence sources and limitations.\n[ ] Document the reviewer and investigation outcome.\n[ ] Obtain approval before restoring the account.\n\n5. RESTORATION CRITERIA\nAn account may be restored only after an authorised reviewer determines that the investigation is complete, the account is safe to use and required corrective actions are complete. Clear the active monitoring state as required by the application workflow, then use the separate Restore after investigation action. Clearing monitoring alone must not automatically unfreeze the account.\n\n6. BUSINESS CONTINUITY\nMaintain current recovery contacts, verified backups and documented service dependencies. Prioritise restoration of identity services, document storage and core employee communications.\n\n7. DEMONSTRATION LIMITATIONS\nInsiderWatch is a project prototype. Its alerts are rule-based indicators, not a legal finding or proof of malicious intent. A production incident process requires formal ownership, evidence-handling controls and approved retention rules.\n\nEND OF RESTRICTED DOCUMENT\nAll names, roles and procedures are fictional sample content.\n',
+        'security_audit.txt': 'NEXORA TECHNOLOGIES\nINTERNAL SECURITY CONTROL REVIEW\nDocument ID: NXT-AUD-044\nVersion: 1.0\nClassification: CONFIDENTIAL | Restricted access\nReview period: 01-24 November 2026\nPrepared by: Demonstration Security Review Team\n\nEXECUTIVE SUMMARY\nThis is a simulated internal audit report for the InsiderWatch demonstration. It describes test scenarios and expected controls; it is not an independent audit, certification or assessment of a real organisation.\n\nSCOPE\n• Employee login and administrator approval workflow\n• Batch-based file clearance enforcement\n• Access-denial event recording\n• Adaptive threat indicators using a rolling two-minute attempt window\n• Persistent intensive monitoring until administrator clearance\n• Employee account freeze and restoration controls\n• Separation of live 24-hour event view and historical archive\n\nCONTROL TEST RESULTS (DEMO)\nSEC-01 — Individual employee identity\nExpected: each employee signs in using an assigned employee ID.\nTest result: PASS in the demonstration scenario.\nEvidence: employee account records and login request events.\n\nSEC-02 — Least-privilege file access\nExpected: a user cannot read or modify a file above their assigned clearance.\nTest result: PASS in configured Batch A/B/C test cases.\nEvidence: allowed and denied access events.\n\nSEC-03 — Denied-access logging\nExpected: restricted access attempts create an audit event with a timestamp and reason.\nTest result: PASS in the demonstration scenario.\nEvidence: event records in the operational SQLite database.\n\nSEC-04 — Adaptive threat escalation\nExpected: repeated denied attempts in the configured rolling window raise threat severity.\nTest result: PASS in scripted demonstration cases.\nEvidence: threat attempt and monitoring records.\n\nSEC-05 — Persistent monitoring\nExpected: an activated monitor remains active until an administrator clears it.\nTest result: PASS in the demonstration scenario.\nEvidence: threat monitoring state and administrator clearance event.\n\nSEC-06 — Account freeze\nExpected: a frozen employee is blocked from new login and loses access to the employee portal.\nTest result: verify during the live demonstration using a test account.\nEvidence required: freeze audit event, portal denial and restoration record.\n\nSEC-07 — Historical event retention\nExpected: events older than 24 hours are archived separately and remain exportable.\nTest result: verify after the archive process runs.\nEvidence required: matching event IDs in history/insiderwatch_history.db and archive CSV.\n\nOPEN ITEMS\n1. Execute a full end-to-end freeze test with an already authenticated employee session.\n2. Verify restoration is blocked while intensive monitoring remains active.\n3. Confirm archive export includes both historical and current records where required.\n4. Review backup and recovery of both SQLite databases.\n5. Record screenshots and test timestamps for the final project demonstration.\n\nOVERALL CONCLUSION\nThe prototype demonstrates role-based access control, audit logging and administrator-led response actions. Test evidence should be collected for every control before presenting it as verified.\n\nClassification and access restriction are part of the project demonstration. All findings and results above are simulated.\n',
+        'financial_summary.txt': 'NEXORA TECHNOLOGIES\nILLUSTRATIVE MANAGEMENT FINANCIAL SUMMARY\nDocument ID: NXT-FIN-019\nVersion: 1.0\nClassification: CONFIDENTIAL | Restricted access\nPeriod: FY 2026-27 planning scenario\nPrepared for: Demonstration Management Review\n\nIMPORTANT NOTICE\nAll figures below are fictional planning assumptions created solely for the InsiderWatch academic demonstration. They are not actual company accounts, audited results, forecasts or investment information.\n\n1. SAMPLE REVENUE PLAN\nSoftware engineering services: INR 48,00,000\nCloud and DevOps services: INR 24,00,000\nData and analytics projects: INR 18,00,000\nSecurity consulting: INR 10,00,000\nIllustrative total: INR 1,00,00,000\n\n2. SAMPLE OPERATING COST PLAN\nEmployee and contractor costs: INR 52,00,000\nCloud and software subscriptions: INR 10,00,000\nTraining and certification: INR 3,00,000\nOffice and administration: INR 8,00,000\nContingency: INR 5,00,000\nIllustrative total: INR 78,00,000\n\n3. ILLUSTRATIVE OPERATING POSITION\nSample planned operating surplus before tax and other adjustments: INR 22,00,000.\nThis is a simple demonstration calculation and is not prepared under any accounting standard.\n\n4. FINANCIAL CONTROL CHECKLIST\n• Require documented approval for purchase commitments.\n• Separate request, approval and payment responsibilities.\n• Reconcile invoices against approved purchase records.\n• Restrict access to payroll and vendor information.\n• Review unusual transactions and retain supporting documentation.\n• Do not send financial files to personal email or storage.\n\n5. MANAGEMENT NOTES\nThe planning scenario assumes project-based service revenue and a small technology-services operating model. Actual performance would depend on signed contracts, delivery costs, collections, taxes and other liabilities.\n\nPrepared by: Demonstration Finance Function\nReview status: Sample document — not approved for real-world use.\n\nAll amounts, assumptions and business details are fictional. Do not use this document for real financial decisions.\n',
     }
 
+    # Populate new/empty files and replace only the original short starter placeholders.
+    # Any file containing user-edited content is left untouched.
+    starter_markers = (
+        "Company overview and general information.",
+        "NEXORA TECHNOLOGIES - COMPANY POLICIES",
+        "This handbook introduces the sample employee experience",
+        "This handbook introduces workplace expectations, communication practices, and employee support resources.",
+        "This document is intended for internal business use.",
+        "Project Orion: Planning and requirements review.",
+        "Use strong unique passwords. Lock your screen when away.",
+        "This demonstration document represents an internal security review record.",
+        "Demonstration-only financial record.",
+    )
     for filename, content in sample_files.items():
-        path = os.path.join(PROTECTED_DIR, filename)
-        if not os.path.isfile(path):
-            with open(path, "w", encoding="utf-8") as file:
+        file_path = os.path.join(PROTECTED_DIR, filename)
+        should_seed = not os.path.isfile(file_path)
+        if not should_seed:
+            try:
+                existing = open(file_path, "r", encoding="utf-8").read()
+                should_seed = (not existing.strip()) or any(
+                    marker in existing for marker in starter_markers
+                )
+            except (OSError, UnicodeDecodeError):
+                should_seed = False
+        if should_seed:
+            with open(file_path, "w", encoding="utf-8") as file:
                 file.write(content)
 
     with connect_db() as con:
@@ -151,9 +136,21 @@ def init_db():
                 resource TEXT NOT NULL,
                 result TEXT NOT NULL,
                 reason TEXT NOT NULL,
-                timestamp TEXT NOT NULL
+                timestamp TEXT NOT NULL,
+                employee_id TEXT,
+                ip_address TEXT,
+                user_agent TEXT
             )
         """)
+
+        # Additive migration: keep old event rows and SQLite database compatible.
+        event_columns = {row[1] for row in con.execute("PRAGMA table_info(events)").fetchall()}
+        if "employee_id" not in event_columns:
+            con.execute("ALTER TABLE events ADD COLUMN employee_id TEXT")
+        if "ip_address" not in event_columns:
+            con.execute("ALTER TABLE events ADD COLUMN ip_address TEXT")
+        if "user_agent" not in event_columns:
+            con.execute("ALTER TABLE events ADD COLUMN user_agent TEXT")
 
         con.execute("""
             CREATE TABLE IF NOT EXISTS employee_accounts (
@@ -162,6 +159,17 @@ def init_db():
                 password_hash TEXT NOT NULL
             )
         """)
+
+        # Additive account-freeze fields; existing employee IDs/password hashes remain unchanged.
+        account_columns = {row[1] for row in con.execute("PRAGMA table_info(employee_accounts)").fetchall()}
+        if "is_frozen" not in account_columns:
+            con.execute("ALTER TABLE employee_accounts ADD COLUMN is_frozen INTEGER NOT NULL DEFAULT 0")
+        if "freeze_reason" not in account_columns:
+            con.execute("ALTER TABLE employee_accounts ADD COLUMN freeze_reason TEXT")
+        if "frozen_at" not in account_columns:
+            con.execute("ALTER TABLE employee_accounts ADD COLUMN frozen_at TEXT")
+        if "unfrozen_at" not in account_columns:
+            con.execute("ALTER TABLE employee_accounts ADD COLUMN unfrozen_at TEXT")
 
         con.execute("""
             CREATE TABLE IF NOT EXISTS login_requests (
@@ -174,6 +182,52 @@ def init_db():
                 reviewed_at TEXT
             )
         """)
+
+        # New tables are additive: existing events/accounts/login data remain intact.
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS threat_attempts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                subject_id TEXT NOT NULL,
+                employee_id TEXT,
+                batch_id TEXT NOT NULL,
+                resource TEXT NOT NULL,
+                source TEXT NOT NULL,
+                ip_address TEXT,
+                user_agent TEXT,
+                occurred_at TEXT NOT NULL
+            )
+        """)
+        con.execute("""
+            CREATE INDEX IF NOT EXISTS idx_threat_attempts_subject_time
+            ON threat_attempts(subject_id, occurred_at)
+        """)
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS threat_monitoring (
+                subject_id TEXT PRIMARY KEY,
+                employee_id TEXT,
+                batch_id TEXT NOT NULL,
+                active INTEGER NOT NULL DEFAULT 0,
+                threat_level TEXT NOT NULL DEFAULT 'LOW',
+                rolling_attempts INTEGER NOT NULL DEFAULT 0,
+                first_attempt_at TEXT,
+                last_attempt_at TEXT,
+                ip_address TEXT,
+                user_agent TEXT,
+                activated_at TEXT,
+                cleared_at TEXT,
+                updated_at TEXT NOT NULL
+            )
+        """)
+
+        attempt_columns = {row[1] for row in con.execute("PRAGMA table_info(threat_attempts)").fetchall()}
+        if "user_agent" not in attempt_columns:
+            con.execute("ALTER TABLE threat_attempts ADD COLUMN user_agent TEXT")
+
+        threat_columns = {row[1] for row in con.execute("PRAGMA table_info(threat_monitoring)").fetchall()}
+        if "ip_address" not in threat_columns:
+            con.execute("ALTER TABLE threat_monitoring ADD COLUMN ip_address TEXT")
+        if "user_agent" not in threat_columns:
+            con.execute("ALTER TABLE threat_monitoring ADD COLUMN user_agent TEXT")
 
         for employee_id, (batch, password) in EMPLOYEE_DEMO_ACCOUNTS.items():
             account = con.execute(
@@ -192,37 +246,232 @@ def init_db():
                     generate_password_hash(password)
                 ))
 
+    os.makedirs(HISTORY_DIR, exist_ok=True)
+    archive_expired_events()
 
-def log_event(user, resource, result, reason):
+
+def _threat_subject(user, reason="", employee_id=None):
+    """Stable monitoring identity: employee, authenticated remote device, or batch test."""
+    if employee_id:
+        return str(employee_id).strip().upper()
+    if "[REMOTE]" in str(reason):
+        return "DEVICE-" + str(user).strip().upper()
+    return "BATCH-" + str(user).strip().upper()
+
+
+def employee_freeze_record(employee_id):
+    if not employee_id:
+        return None
+    with connect_db() as con:
+        row = con.execute(
+            "SELECT is_frozen, freeze_reason, frozen_at FROM employee_accounts WHERE employee_id=?",
+            (str(employee_id).strip().upper(),)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def employee_is_frozen(employee_id):
+    record = employee_freeze_record(employee_id)
+    return bool(record and int(record.get("is_frozen") or 0) == 1)
+
+
+def _monitoring_state(subject_id):
+    with connect_db() as con:
+        row = con.execute(
+            "SELECT * FROM threat_monitoring WHERE subject_id=? AND active=1",
+            (subject_id,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def log_event(user, resource, result, reason, employee_id=None):
     stamp = datetime.now().astimezone().isoformat(timespec="seconds")
+    employee_id = employee_id or session.get("employee_id")
+    subject_id = _threat_subject(user, reason, employee_id)
+    monitor = _monitoring_state(subject_id)
+    if monitor and "[INTENSIVE MONITORING]" not in str(reason):
+        reason = ("[INTENSIVE MONITORING] " + str(reason))[:500]
+    ip_address = (request.remote_addr or "Unknown")[:64]
+    user_agent = request.user_agent.string[:300]
 
     with connect_db() as con:
-        con.execute("""
+        cur = con.execute("""
             INSERT INTO events
-            (user_id, resource, result, reason, timestamp)
-            VALUES (?, ?, ?, ?, ?)
-        """, (str(user), str(resource), str(result), str(reason), stamp))
+            (user_id, resource, result, reason, timestamp, employee_id, ip_address, user_agent)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (str(user), str(resource), str(result), str(reason), stamp, employee_id, ip_address, user_agent))
+        if monitor:
+            con.execute("""
+                UPDATE threat_monitoring SET ip_address=?, user_agent=?, updated_at=?
+                WHERE subject_id=? AND active=1
+            """, (ip_address, user_agent, stamp, subject_id))
+        return cur.lastrowid
 
 
-def log_denial(user, resource, reason, prefix=""):
-    log_event(
-        user,
-        str(resource)[:120] or "(empty)",
-        "DENIED",
-        (prefix + reason)[:500]
+def _register_denied_attempt(user, resource, reason, event_id, employee_id=None):
+    now = datetime.now().astimezone()
+    stamp = now.isoformat(timespec="seconds")
+    employee_id = employee_id or session.get("employee_id")
+    subject_id = _threat_subject(user, reason, employee_id)
+    source = "REMOTE DEVICE" if "[REMOTE]" in str(reason) else (
+        "EMPLOYEE PORTAL" if employee_id else "DASHBOARD / BATCH TEST"
+    )
+    ip_address = (request.remote_addr or "Unknown")[:64]
+    user_agent = request.user_agent.string[:300]
+    with connect_db() as con:
+        con.execute("""
+            INSERT INTO threat_attempts
+            (subject_id, employee_id, batch_id, resource, source, ip_address, user_agent, occurred_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (subject_id, employee_id, str(user), str(resource)[:120], source, ip_address, user_agent, stamp))
+        cutoff = (now - timedelta(seconds=THREAT_WINDOW_SECONDS)).isoformat(timespec="seconds")
+        con.execute(
+            "DELETE FROM threat_attempts WHERE subject_id=? AND occurred_at < ?",
+            (subject_id, cutoff)
+        )
+        recent = con.execute("""
+            SELECT COUNT(*) AS n, MIN(occurred_at) AS first_at, MAX(occurred_at) AS last_at
+            FROM threat_attempts WHERE subject_id=? AND occurred_at >= ?
+        """, (subject_id, cutoff)).fetchone()
+        count = int(recent["n"] or 0)
+        existing = con.execute(
+            "SELECT active, activated_at FROM threat_monitoring WHERE subject_id=?",
+            (subject_id,)
+        ).fetchone()
+        active = bool(existing and existing["active"])
+        if active:
+            level = "CRITICAL" if count >= 5 else "HIGH"
+        elif count >= THREAT_ACTIVATION_ATTEMPTS:
+            level = "HIGH"
+            active = True
+        elif count == 2:
+            level = "MEDIUM"
+        else:
+            level = "LOW"
+        activated_at = (
+            existing["activated_at"] if active and existing and existing["active"]
+            else stamp if active else None
+        )
+        con.execute("""
+            INSERT INTO threat_monitoring
+            (subject_id, employee_id, batch_id, active, threat_level, rolling_attempts,
+             first_attempt_at, last_attempt_at, ip_address, user_agent, activated_at, cleared_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
+            ON CONFLICT(subject_id) DO UPDATE SET
+              employee_id=COALESCE(excluded.employee_id, threat_monitoring.employee_id),
+              batch_id=excluded.batch_id, active=excluded.active,
+              threat_level=excluded.threat_level, rolling_attempts=excluded.rolling_attempts,
+              first_attempt_at=excluded.first_attempt_at, last_attempt_at=excluded.last_attempt_at,
+              ip_address=excluded.ip_address, user_agent=excluded.user_agent,
+              activated_at=CASE
+                WHEN excluded.active=1 AND threat_monitoring.active=0 THEN excluded.activated_at
+                ELSE threat_monitoring.activated_at END,
+              cleared_at=NULL, updated_at=excluded.updated_at
+        """, (subject_id, employee_id, str(user), int(active), level, count,
+              recent["first_at"], recent["last_at"], ip_address, user_agent, activated_at, stamp))
+
+        # Make the escalation visible in the existing audit log as well.
+        label = "POTENTIAL INSIDER THREAT - INTENSIVE MONITORING ACTIVATED" if active and not (existing and existing["active"]) else (
+            "INTENSIVE MONITORING ACTIVE" if active else
+            "Repeated unauthorized attempt - elevated review" if count == 2 else
+            "First unauthorized attempt - possible accidental access"
+        )
+        con.execute(
+            "UPDATE events SET reason=? WHERE id=?",
+            ((str(reason) + f" | THREAT {level}: {label}")[:500], event_id)
+        )
+    return {"subject_id": subject_id, "attempts": count, "threat_level": level, "monitoring_active": active}
+
+
+def log_denial(user, resource, reason, prefix="", employee_id=None):
+    full_reason = (prefix + str(reason))[:500]
+    event_id = log_event(
+        user, str(resource)[:120] or "(empty)", "DENIED", full_reason, employee_id=employee_id
+    )
+    return _register_denied_attempt(
+        user, str(resource)[:120] or "(empty)", full_reason, event_id, employee_id=employee_id
     )
 
 
-def fetch_events(limit=500):
-    limit = max(1, min(int(limit), 1000))
+def _event_datetime(value):
+    try:
+        parsed = datetime.fromisoformat(str(value))
+        if parsed.tzinfo is None:
+            parsed = parsed.astimezone()
+        return parsed
+    except (ValueError, TypeError):
+        return None
 
+
+def archive_expired_events():
+    """Move events older than 24 hours to history/insiderwatch_history.db."""
+    os.makedirs(HISTORY_DIR, exist_ok=True)
+    cutoff = datetime.now().astimezone() - timedelta(hours=EVENTS_VISIBLE_HOURS)
+    with connect_db() as live:
+        expired = []
+        for row in live.execute("SELECT * FROM events ORDER BY id").fetchall():
+            event_time = _event_datetime(row["timestamp"])
+            if event_time is not None and event_time < cutoff:
+                expired.append(dict(row))
+        if not expired:
+            return 0
+
+        with sqlite3.connect(HISTORY_DB_PATH, timeout=15) as history:
+            history.execute("""
+                CREATE TABLE IF NOT EXISTS events (
+                    id INTEGER PRIMARY KEY, user_id TEXT NOT NULL,
+                    resource TEXT NOT NULL, result TEXT NOT NULL,
+                    reason TEXT NOT NULL, timestamp TEXT NOT NULL,
+                    employee_id TEXT, ip_address TEXT, user_agent TEXT
+                )
+            """)
+            history.executemany("""
+                INSERT OR IGNORE INTO events
+                (id,user_id,resource,result,reason,timestamp,employee_id,ip_address,user_agent)
+                VALUES (?,?,?,?,?,?,?,?,?)
+            """, [(
+                e.get("id"), e.get("user_id"), e.get("resource"),
+                e.get("result"), e.get("reason"), e.get("timestamp"),
+                e.get("employee_id"), e.get("ip_address"), e.get("user_agent")
+            ) for e in expired])
+            history.commit()
+
+        ids = [e["id"] for e in expired]
+        marks = ",".join("?" for _ in ids)
+        live.execute(f"DELETE FROM events WHERE id IN ({marks})", ids)
+        live.commit()
+        return len(expired)
+
+
+def fetch_events(limit=500):
+    archive_expired_events()
+    limit = max(1, min(int(limit), 1000))
+    cutoff = (datetime.now().astimezone() - timedelta(hours=EVENTS_VISIBLE_HOURS)).isoformat(timespec="seconds")
     with connect_db() as con:
         rows = con.execute("""
-            SELECT * FROM events
+            SELECT * FROM events WHERE timestamp >= ?
             ORDER BY id DESC LIMIT ?
-        """, (limit,)).fetchall()
-
+        """, (cutoff, limit)).fetchall()
     return [dict(row) for row in rows]
+
+
+def fetch_all_events():
+    """Return both live and archived events for complete audit export."""
+    archive_expired_events()
+    with connect_db() as con:
+        live_rows = [dict(row) for row in con.execute(
+            "SELECT * FROM events ORDER BY id DESC"
+        ).fetchall()]
+    archived_rows = []
+    if os.path.exists(HISTORY_DB_PATH):
+        with sqlite3.connect(HISTORY_DB_PATH, timeout=15) as history:
+            history.row_factory = sqlite3.Row
+            archived_rows = [dict(row) for row in history.execute(
+                "SELECT * FROM events ORDER BY id DESC"
+            ).fetchall()]
+    combined = {row["id"]: row for row in archived_rows}
+    combined.update({row["id"]: row for row in live_rows})
+    return sorted(combined.values(), key=lambda row: row["id"], reverse=True)
 
 
 # ---------------------------------------------------------
@@ -387,6 +636,24 @@ def summary():
                 "denied": sum(e["result"] == "DENIED" for e in user_events)
             })
 
+        threat_cutoff = (datetime.now().astimezone() - timedelta(seconds=THREAT_WINDOW_SECONDS)).isoformat(timespec="seconds")
+        with connect_db() as con:
+            active_monitors = con.execute(
+                "SELECT COUNT(*) FROM threat_monitoring WHERE active=1"
+            ).fetchone()[0]
+            threat_indicators = [dict(row) for row in con.execute("""
+                SELECT tm.*,
+                  (SELECT COUNT(*) FROM threat_attempts ta
+                    WHERE ta.subject_id=tm.subject_id AND ta.occurred_at >= ?) AS attempts_in_window,
+                  (SELECT resource FROM events e WHERE
+                    ((e.employee_id=tm.employee_id AND tm.employee_id IS NOT NULL)
+                      OR (tm.employee_id IS NULL AND e.user_id=tm.batch_id))
+                    AND e.result='DENIED' ORDER BY e.id DESC LIMIT 1) AS last_resource
+                FROM threat_monitoring tm
+                WHERE tm.active=1 OR (tm.threat_level <> 'CLEARED' AND tm.last_attempt_at >= ?)
+                ORDER BY tm.active DESC, tm.last_attempt_at DESC
+            """, (threat_cutoff, threat_cutoff)).fetchall()]
+
         return jsonify({
             "total": len(events),
             "events24": len(recent),
@@ -394,12 +661,169 @@ def summary():
             "allowed": allowed,
             "alerts": alerts,
             "users": users,
-            "hourly": hourly
+            "hourly": hourly,
+            "active_threat_monitors": active_monitors,
+            "threat_indicators": threat_indicators
         })
 
     except sqlite3.Error:
         app.logger.exception("Could not calculate summary")
         return jsonify({"error": "Could not calculate summary"}), 500
+
+
+@app.route("/api/admin/threats")
+def get_threat_monitors():
+    """Return active monitors and recent activity; protected by admin auth middleware."""
+    try:
+        with connect_db() as con:
+            recent_cutoff = (datetime.now().astimezone() - timedelta(seconds=THREAT_WINDOW_SECONDS)).isoformat(timespec="seconds")
+            rows = con.execute("""
+                SELECT tm.*,
+                  (SELECT COUNT(*) FROM threat_attempts ta
+                    WHERE ta.subject_id=tm.subject_id AND ta.occurred_at >= ?) AS attempts_in_window,
+                  (SELECT resource FROM events e WHERE
+                    ((e.employee_id=tm.employee_id AND tm.employee_id IS NOT NULL)
+                      OR (tm.employee_id IS NULL AND e.user_id=tm.batch_id))
+                    AND e.result='DENIED' ORDER BY e.id DESC LIMIT 1) AS last_resource,
+                  (SELECT result FROM events e WHERE
+                    (e.employee_id=tm.employee_id OR (tm.employee_id IS NULL AND e.user_id=tm.batch_id))
+                    ORDER BY e.id DESC LIMIT 1) AS last_result,
+                  (SELECT reason FROM events e WHERE
+                    (e.employee_id=tm.employee_id OR (tm.employee_id IS NULL AND e.user_id=tm.batch_id))
+                    ORDER BY e.id DESC LIMIT 1) AS last_activity_reason
+                  ,COALESCE((SELECT ea.is_frozen FROM employee_accounts ea
+                    WHERE ea.employee_id=tm.employee_id), 0) AS is_frozen
+                FROM threat_monitoring tm
+                WHERE tm.active=1
+                   OR (tm.threat_level <> 'CLEARED' AND tm.last_attempt_at >= ?)
+                   OR EXISTS (SELECT 1 FROM employee_accounts ea
+                              WHERE ea.employee_id=tm.employee_id AND ea.is_frozen=1)
+                ORDER BY tm.active DESC, is_frozen DESC, tm.last_attempt_at DESC
+            """, (recent_cutoff, recent_cutoff)).fetchall()
+            result = []
+            for row in rows:
+                item = dict(row)
+                item["recent_activity"] = [dict(x) for x in con.execute("""
+                    SELECT resource, result, reason, timestamp, ip_address, user_agent FROM events
+                    WHERE (employee_id=? AND ? IS NOT NULL)
+                       OR (employee_id IS NULL AND user_id=?)
+                    ORDER BY id DESC LIMIT 12
+                """, (item.get("employee_id"), item.get("employee_id"), item.get("batch_id", ""))).fetchall()]
+                item["rolling_attempts"] = item.get("attempts_in_window", 0)
+                result.append(item)
+        return jsonify(result)
+    except sqlite3.Error:
+        app.logger.exception("Could not load active threat monitors")
+        return jsonify({"error": "Could not load threat monitors"}), 500
+
+
+@app.route("/api/admin/threats/<path:subject_id>/clear", methods=["POST"])
+def clear_threat_monitor(subject_id):
+    """Administrator acknowledgement clears active monitoring and its live counter."""
+    subject_id = str(subject_id).strip().upper()
+    stamp = datetime.now().astimezone().isoformat(timespec="seconds")
+    try:
+        with connect_db() as con:
+            row = con.execute(
+                "SELECT subject_id FROM threat_monitoring WHERE subject_id=? AND active=1",
+                (subject_id,)
+            ).fetchone()
+            if not row:
+                return jsonify({"error": "No active monitoring record found."}), 404
+            con.execute("""
+                UPDATE threat_monitoring SET active=0, threat_level='CLEARED',
+                  rolling_attempts=0, cleared_at=?, updated_at=?
+                WHERE subject_id=?
+            """, (stamp, stamp, subject_id))
+            con.execute("DELETE FROM threat_attempts WHERE subject_id=?", (subject_id,))
+            batch_row = con.execute(
+                "SELECT batch_id, employee_id FROM threat_monitoring WHERE subject_id=?",
+                (subject_id,)
+            ).fetchone()
+            con.execute("""
+                INSERT INTO events (user_id, resource, result, reason, timestamp, employee_id, ip_address, user_agent)
+                VALUES (?, 'threat_monitoring', 'CLEARED', ?, ?, ?, ?, ?)
+            """, (batch_row["batch_id"],
+                  "Administrator " + (request.authorization.username if request.authorization else "admin") + " manually cleared intensive monitoring for " + subject_id,
+                  stamp, batch_row["employee_id"], request.remote_addr or "Unknown", request.user_agent.string[:300]))
+        return jsonify({"status": "CLEARED", "subject_id": subject_id, "cleared_at": stamp})
+    except sqlite3.Error:
+        app.logger.exception("Could not clear threat monitor")
+        return jsonify({"error": "Could not clear threat monitor"}), 500
+
+
+@app.route("/api/admin/threats/<path:subject_id>/freeze", methods=["POST"])
+def freeze_employee_account(subject_id):
+    employee_id = str(subject_id).strip().upper()
+    data = request.get_json(silent=True) or {}
+    reason = str(data.get("reason") or "Account frozen during InsiderWatch security investigation").strip()[:500]
+    stamp = datetime.now().astimezone().isoformat(timespec="seconds")
+    try:
+        with connect_db() as con:
+            account = con.execute(
+                "SELECT employee_id, batch_id, is_frozen FROM employee_accounts WHERE employee_id=?",
+                (employee_id,)
+            ).fetchone()
+            if not account:
+                return jsonify({"error": "Only a specific employee account can be frozen. Device and batch records cannot be frozen here."}), 400
+            if int(account["is_frozen"] or 0) == 1:
+                return jsonify({"status": "FROZEN", "employee_id": employee_id})
+            con.execute("""
+                UPDATE employee_accounts
+                SET is_frozen=1, freeze_reason=?, frozen_at=?, unfrozen_at=NULL
+                WHERE employee_id=?
+            """, (reason, stamp, employee_id))
+            # Any outstanding approval request is rejected while the account is frozen.
+            con.execute("""
+                UPDATE login_requests SET status='REJECTED', reviewed_at=?
+                WHERE employee_id=? AND status='PENDING'
+            """, (stamp, employee_id))
+            con.execute("""
+                INSERT INTO events (user_id, resource, result, reason, timestamp, employee_id, ip_address, user_agent)
+                VALUES (?, 'employee_account', 'FROZEN', ?, ?, ?, ?, ?)
+            """, (account["batch_id"], "Administrator froze account: " + reason, stamp,
+                  employee_id, request.remote_addr or "Unknown", request.user_agent.string[:300]))
+        return jsonify({"status": "FROZEN", "employee_id": employee_id, "frozen_at": stamp})
+    except sqlite3.Error:
+        app.logger.exception("Could not freeze employee account")
+        return jsonify({"error": "Could not freeze employee account"}), 500
+
+
+@app.route("/api/admin/threats/<path:subject_id>/restore", methods=["POST"])
+def restore_employee_account(subject_id):
+    employee_id = str(subject_id).strip().upper()
+    stamp = datetime.now().astimezone().isoformat(timespec="seconds")
+    try:
+        with connect_db() as con:
+            account = con.execute(
+                "SELECT employee_id, batch_id, is_frozen FROM employee_accounts WHERE employee_id=?",
+                (employee_id,)
+            ).fetchone()
+            if not account:
+                return jsonify({"error": "Employee account not found."}), 404
+            active_monitor = con.execute(
+                "SELECT active FROM threat_monitoring WHERE subject_id=?",
+                (employee_id,)
+            ).fetchone()
+            if active_monitor and int(active_monitor["active"] or 0) == 1:
+                return jsonify({"error": "Clear intensive monitoring first, then complete the investigation before restoring this account."}), 409
+            if int(account["is_frozen"] or 0) == 0:
+                return jsonify({"status": "ACTIVE", "employee_id": employee_id})
+            con.execute("""
+                UPDATE employee_accounts
+                SET is_frozen=0, unfrozen_at=?
+                WHERE employee_id=?
+            """, (stamp, employee_id))
+            con.execute("""
+                INSERT INTO events (user_id, resource, result, reason, timestamp, employee_id, ip_address, user_agent)
+                VALUES (?, 'employee_account', 'RESTORED', ?, ?, ?, ?, ?)
+            """, (account["batch_id"],
+                  "Administrator restored employee account after investigation", stamp,
+                  employee_id, request.remote_addr or "Unknown", request.user_agent.string[:300]))
+        return jsonify({"status": "ACTIVE", "employee_id": employee_id, "restored_at": stamp})
+    except sqlite3.Error:
+        app.logger.exception("Could not restore employee account")
+        return jsonify({"error": "Could not restore employee account"}), 500
 
 
 @app.route("/api/demo", methods=["POST"])
@@ -429,6 +853,28 @@ def demo():
     })
 
 
+@app.route("/api/history/export")
+def export_history_csv():
+    os.makedirs(HISTORY_DIR, exist_ok=True)
+    output = io.StringIO()
+    writer = csv.DictWriter(
+        output,
+        fieldnames=["id", "user_id", "employee_id", "resource", "result",
+                    "reason", "timestamp", "ip_address", "user_agent"]
+    )
+    writer.writeheader()
+    if os.path.exists(HISTORY_DB_PATH):
+        with sqlite3.connect(HISTORY_DB_PATH, timeout=15) as history:
+            history.row_factory = sqlite3.Row
+            writer.writerows(dict(row) for row in history.execute(
+                "SELECT * FROM events ORDER BY id DESC"
+            ).fetchall())
+    return Response(
+        output.getvalue(), mimetype="text/csv",
+        headers={"Content-Disposition": "attachment; filename=insiderwatch_history.csv"}
+    )
+
+
 @app.route("/api/export")
 def export_csv():
     output = io.StringIO()
@@ -436,12 +882,13 @@ def export_csv():
     writer = csv.DictWriter(
         output,
         fieldnames=[
-            "id", "user_id", "resource", "result", "reason", "timestamp"
+            "id", "user_id", "employee_id", "resource", "result", "reason",
+            "timestamp", "ip_address", "user_agent"
         ]
     )
 
     writer.writeheader()
-    writer.writerows(fetch_events())
+    writer.writerows(fetch_all_events())
 
     return Response(
         output.getvalue(),
@@ -512,6 +959,11 @@ def employee_login_request():
             "error": "Invalid employee ID or password."
         }), 401
 
+    if employee_is_frozen(employee_id):
+        return jsonify({
+            "error": "Your employee account is temporarily frozen by the security team. You cannot sign in until the investigation is completed and an administrator restores your account."
+        }), 403
+
     token = secrets.token_urlsafe(32)
     now = datetime.now().astimezone().isoformat(timespec="seconds")
 
@@ -526,6 +978,7 @@ def employee_login_request():
 
     session["login_request_id"] = request_id
     session["login_request_token"] = token
+    session["pending_employee_id"] = employee_id
 
     session.pop("employee_id", None)
     session.pop("employee_batch", None)
@@ -547,6 +1000,13 @@ def employee_login_request():
 def employee_login_status():
     request_id = session.get("login_request_id")
     token = session.get("login_request_token")
+    pending_employee = session.get("pending_employee_id")
+    if pending_employee and employee_is_frozen(pending_employee):
+        session.clear()
+        return jsonify({
+            "status": "FROZEN",
+            "message": "Your account has been frozen by the security team. Contact the administrator after the investigation."
+        }), 403
 
     if not request_id or not token:
         return jsonify({"status": "NONE"}), 401
@@ -628,6 +1088,20 @@ def review_login_request(request_id):
 # All files are displayed; actions are permission-checked.
 # ---------------------------------------------------------
 
+@app.route("/api/employee/session")
+def employee_session_status():
+    employee_id = session.get("employee_id")
+    if not employee_id:
+        return jsonify({"status": "SIGNED_OUT"}), 401
+    if employee_is_frozen(employee_id):
+        session.clear()
+        return jsonify({
+            "status": "FROZEN",
+            "message": "Your account has been frozen by the security team. Your session has been ended. Contact the administrator after the investigation."
+        }), 403
+    return jsonify({"status": "ACTIVE", "employee_id": employee_id})
+
+
 @app.route("/portal")
 def employee_portal():
     employee_id = session.get("employee_id")
@@ -635,6 +1109,17 @@ def employee_portal():
 
     if not employee_id or batch not in USERS:
         return redirect(url_for("employee_login_page"))
+    if employee_is_frozen(employee_id):
+        session.clear()
+        return render_template_string("""
+            <!doctype html><html><head><title>Account frozen</title></head>
+            <body style="font-family:Arial;background:#0b1020;color:#fff;padding:8vh 8vw">
+            <h1 style="color:#ff627e">Account temporarily frozen</h1>
+            <p>Your InsiderWatch session has been ended by the security team while an investigation is in progress.</p>
+            <p>You cannot access the company portal or sign in again until an administrator completes the investigation and restores your account.</p>
+            <a style="color:#48e5e1" href="/employee">Return to employee login</a>
+            </body></html>
+        """), 403
 
     all_files = []
 
@@ -664,18 +1149,21 @@ def employee_read_file(filename):
 
     if not employee_id or batch not in USERS:
         return jsonify({"error": "Login approval required"}), 401
+    if employee_is_frozen(employee_id):
+        session.clear()
+        return jsonify({"error": "Your account is frozen. Your session has been ended."}), 403
 
     filename = os.path.basename(filename).lower()
 
     if filename not in FILES:
-        log_denial(batch, filename, "Unknown file", "[PORTAL] ")
+        log_denial(batch, filename, "Unknown file", "[PORTAL] ", employee_id=employee_id)
         return "File not found", 404
 
     if not check_file_permission(batch, filename, "read"):
         log_denial(
             batch, filename,
             "Unauthorized read attempt",
-            "[PORTAL SECURITY ALERT] "
+            "[PORTAL SECURITY ALERT] ", employee_id=employee_id
         )
 
         return render_template_string("""
@@ -694,7 +1182,7 @@ def employee_read_file(filename):
 
     log_event(
         batch, filename, "ALLOWED",
-        f"File read by {employee_id}"
+        f"File read by {employee_id}", employee_id=employee_id
     )
 
     return send_from_directory(
@@ -709,6 +1197,9 @@ def modify_company_file(filename):
 
     if not employee_id or batch not in USERS:
         return jsonify({"error": "Login approval required"}), 401
+    if employee_is_frozen(employee_id):
+        session.clear()
+        return jsonify({"error": "Your account is frozen. Your session has been ended."}), 403
 
     filename = os.path.basename(filename).lower()
 
@@ -734,7 +1225,7 @@ def modify_company_file(filename):
         log_denial(
             batch, filename,
             f"Unauthorized {action} attempt",
-            "[PORTAL SECURITY ALERT] "
+            "[PORTAL SECURITY ALERT] ", employee_id=employee_id
         )
 
         return jsonify({
@@ -747,7 +1238,7 @@ def modify_company_file(filename):
 
     log_event(
         batch, filename, "ALLOWED",
-        f"File {action} by {employee_id}"
+        f"File {action} by {employee_id}", employee_id=employee_id
     )
 
     return jsonify({
@@ -908,7 +1399,7 @@ form.addEventListener("submit",async function(event){
   const data=await response.json();
   if(!response.ok){message.textContent=data.error||"Login failed. Check your credentials.";return;}
   message.textContent="Request sent. Waiting for monitoring approval...";
-  poller=setInterval(async()=>{try{const r=await fetch("/api/employee/status");const s=await r.json();if(s.status==="APPROVED"){clearInterval(poller);window.location.href="/portal";}else if(s.status==="REJECTED"){clearInterval(poller);message.textContent="Your login request was rejected. Contact your administrator.";}}catch(error){message.textContent="Unable to check approval status. Please keep this page open.";}},2000);
+  poller=setInterval(async()=>{try{const r=await fetch("/api/employee/status");const s=await r.json();if(s.status==="APPROVED"){clearInterval(poller);window.location.href="/portal";}else if(s.status==="REJECTED"){clearInterval(poller);message.textContent="Your login request was rejected. Contact your administrator.";}else if(s.status==="FROZEN"){clearInterval(poller);message.textContent=s.message||"Your account is frozen. Contact the administrator.";}}catch(error){message.textContent="Unable to check approval status. Please keep this page open.";}},2000);
  }catch(error){message.textContent="Cannot connect to the server. Please try again.";}
 });
 </script>
@@ -941,6 +1432,8 @@ EMPLOYEE_PORTAL_HTML = r"""
 <script>
 function showEditor(name){const editor=document.getElementById("editor-"+name);editor.style.display=editor.style.display==="block"?"none":"block";}
 async function saveFile(name){const content=document.getElementById("content-"+name).value;const message=document.getElementById("message-"+name);message.textContent="Saving...";try{const response=await fetch("/api/company/file/"+encodeURIComponent(name),{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({content:content})});const data=await response.json();message.textContent=data.message||data.error||"Finished.";if(!response.ok)message.className="denied";}catch(error){message.textContent="Could not connect to the server.";}}
+async function verifyEmployeeSession(){try{const response=await fetch("/api/employee/session",{cache:"no-store"});if(response.status===403){const data=await response.json();document.body.innerHTML='<main style="max-width:760px;margin:12vh auto;padding:35px;font-family:Arial;color:#fff;background:#141a2d;border:1px solid #ff627e66;border-radius:18px"><h1 style="color:#ff627e">Account temporarily frozen</h1><p>'+String(data.message||'Your session has been ended by the security team.')+'</p><p>You cannot use the company portal or sign in again until an administrator completes the investigation and restores your account.</p><a style="color:#48e5e1" href="/employee">Return to employee login</a></main>';}}catch(error){console.warn("Session verification failed",error);}}
+verifyEmployeeSession();setInterval(verifyEmployeeSession,3000);
 </script></body></html>
 """
 
@@ -955,57 +1448,97 @@ DASHBOARD_HTML = r"""
 <style>
 :root{--bg:#080b16;--side:#0d1222;--panel:#121a2d;--panel2:#171f35;--line:#29334e;--text:#f3f5ff;--muted:#9aa7c3;--cyan:#45e6e0;--pink:#ff4f9a;--purple:#9c7bff;--green:#6cf0b5;--red:#ff627e;--amber:#ffc66d}
 *{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:90px}body{margin:0;background:radial-gradient(ellipse at 80% 0%,#30205244,transparent 32%),var(--bg);color:var(--text);font-family:Inter,Segoe UI,Arial,sans-serif}button,input,select{font:inherit}a{color:var(--cyan);text-decoration:none}.layout{display:grid;grid-template-columns:250px minmax(0,1fr);min-height:100vh}aside{position:sticky;top:0;height:100vh;overflow:auto;padding:25px 17px;background:#0b1020;border-right:1px solid var(--line)}.brand{display:flex;gap:11px;align-items:center;padding:0 8px}.brandmark{width:42px;height:42px;border-radius:13px;display:grid;place-items:center;font-weight:900;font-size:20px;background:linear-gradient(135deg,var(--pink),var(--purple),var(--cyan));box-shadow:0 8px 25px #9c7bff33}.brand strong{font-size:17px;letter-spacing:.6px}.brand strong span{color:var(--cyan)}.sub{font-size:10px;letter-spacing:1.6px;color:var(--muted);margin:6px 8px 28px}.navlabel{font-size:10px;letter-spacing:2px;color:#657493;margin:24px 10px 9px}.nav{display:flex;align-items:center;gap:11px;width:100%;text-align:left;padding:12px 13px;border-radius:10px;margin:4px 0;background:transparent;border:1px solid transparent;color:#aab5ce;cursor:pointer;font-size:12px}.nav:hover{background:#ffffff08;color:white}.nav.active{background:linear-gradient(100deg,#ff4f9a20,#9c7bff22,#45e6e015);color:white;border-color:#9c7bff55}.nav .ico{width:22px;text-align:center;font-size:16px;color:var(--cyan)}.sidebottom{margin-top:32px;border:1px solid var(--line);border-radius:12px;padding:14px;background:#ffffff04;font-size:11px;color:var(--muted);line-height:1.8}.dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 10px #6cf0b5;margin-right:6px}main{min-width:0}header{position:sticky;top:0;z-index:10;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;padding:18px 28px;background:#080b16eF;backdrop-filter:blur(16px);border-bottom:1px solid var(--line)}header b{font-size:12px;letter-spacing:1.2px}header .muted{font-size:11px;color:var(--muted);margin-top:4px}.headright{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.statuspill{border:1px solid #6cf0b544;color:var(--green);padding:8px 11px;border-radius:30px;font-size:10px;background:#6cf0b50b}.content{padding:25px;max-width:1800px;margin:auto}.page{display:none;animation:fade .22s ease}.page.active{display:block}@keyframes fade{from{opacity:.45;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}.pagetitle{display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:19px}.eyebrow{font-size:10px;letter-spacing:2px;color:var(--cyan);font-weight:800}.pagetitle h1{font-size:26px;letter-spacing:-.6px;margin:7px 0}.pagetitle p{font-size:12px;color:var(--muted);margin:0}.actions,.formrow{display:flex;gap:9px;flex-wrap:wrap}button,select,input{background:#171f35;color:var(--text);border:1px solid var(--line);border-radius:9px;padding:10px 12px;outline:none}button{cursor:pointer;font-size:11px}button:hover{border-color:var(--cyan)}button:disabled{opacity:.5;cursor:wait}.primary{background:linear-gradient(100deg,#ff4f9a,#9c7bff);border:0;color:white;font-weight:800}.cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:13px;margin:16px 0}.metric,.panel{min-width:0;border:1px solid var(--line);border-radius:15px;background:linear-gradient(145deg,#151d32,#101727);padding:18px;box-shadow:0 12px 35px #00000012}.metric{position:relative;overflow:hidden}.metric:after{content:"";position:absolute;width:90px;height:90px;border-radius:50%;right:-35px;top:-35px;background:var(--glow,#45e6e0);opacity:.08;filter:blur(2px)}.metric .label{font-size:10px;color:var(--muted);letter-spacing:1.1px}.value{font-size:30px;font-weight:800;margin:12px 0 4px}.metric small{font-size:10px;color:var(--muted)}.cyan{color:var(--cyan)}.green{color:var(--green)}.red{color:var(--red)}.amber{color:var(--amber)}.purple{color:var(--purple)}.grid2{display:grid;grid-template-columns:1.3fr 1fr;gap:14px;margin:14px 0}.grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin:14px 0}.panel h2{font-size:13px;margin:0 0 14px}.panel .desc{font-size:11px;color:var(--muted);margin:-6px 0 14px;line-height:1.6}.tablewrap{width:100%;overflow:auto}table{width:100%;border-collapse:collapse;font-size:11px;min-width:650px}th,td{text-align:left;padding:12px 9px;border-bottom:1px solid #29334eaa;vertical-align:top;overflow-wrap:anywhere}th{font-size:9px;letter-spacing:.9px;color:#8291b0;font-weight:700}tbody tr:hover{background:#ffffff05}.badge{display:inline-block;padding:5px 8px;border-radius:6px;font-size:9px;font-weight:800;letter-spacing:.4px}.ALLOWED{color:var(--green);background:#6cf0b514;border:1px solid #6cf0b526}.DENIED{color:var(--red);background:#ff627e14;border:1px solid #ff627e26}.PENDING{color:var(--amber);background:#ffc66d14}.empty{color:var(--muted);padding:18px 0;font-size:11px}.barrow{margin:14px 0}.barlabel{display:flex;justify-content:space-between;gap:10px;font-size:11px}.bar{height:7px;background:#222d45;border-radius:10px;overflow:hidden;margin-top:7px}.bar span{display:block;height:100%;border-radius:10px;background:linear-gradient(90deg,var(--purple),var(--cyan))}.alert{padding:13px;border:1px solid #ff627e38;background:#ff627e0b;border-radius:11px;margin:9px 0;font-size:11px;line-height:1.7}.alert.med{border-color:#ffc66d38;background:#ffc66d08}.callout{padding:13px;border:1px solid #45e6e033;background:#45e6e008;border-radius:10px;color:var(--muted);font-size:11px;line-height:1.7}.quickgrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.quick{padding:14px;border-radius:11px;background:#ffffff05;border:1px solid var(--line)}.quick b{display:block;font-size:12px;margin-bottom:5px}.quick span{font-size:10px;color:var(--muted)}.eventtop{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px}.search{min-width:190px}.sectionhint{font-size:10px;color:var(--muted);margin-top:10px}.policygrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.policy{padding:17px;border-radius:12px;border:1px solid var(--line);background:#ffffff04}.policy h3{font-size:12px;margin:0 0 8px}.policy p{font-size:11px;color:var(--muted);line-height:1.8}.employee-card{display:flex;gap:13px;align-items:center;padding:15px;border:1px solid var(--line);border-radius:12px;background:#ffffff04}.avatar{width:43px;height:43px;display:grid;place-items:center;border-radius:13px;background:linear-gradient(135deg,#ff4f9a,#9c7bff);font-weight:900}.employee-card b{font-size:12px}.employee-card p{margin:4px 0 0;font-size:10px;color:var(--muted)}footer{padding:20px 0 0;text-align:center;color:#63718e;font-size:10px}
-.navbadge{margin-left:auto;min-width:22px;height:22px;padding:0 6px;border-radius:999px;display:inline-flex;align-items:center;justify-content:center;font-size:10px;font-weight:900;line-height:1;color:#fff;box-shadow:0 0 0 2px #0b1020;animation:badgeIn .2s ease}.navbadge[hidden]{display:none!important}.navbadge.danger{background:linear-gradient(135deg,#ff405f,#ff1744);box-shadow:0 0 12px #ff174455,0 0 0 2px #0b1020}.navbadge.pending{background:linear-gradient(135deg,#ffbd52,#ff8a28);color:#251200;box-shadow:0 0 12px #ffad4244,0 0 0 2px #0b1020}.nav{gap:11px}.navtext{flex:1;text-align:left}@keyframes badgeIn{from{transform:scale(.65);opacity:.4}to{transform:scale(1);opacity:1}}@media(max-width:1050px){.layout{grid-template-columns:210px minmax(0,1fr)}.cards{grid-template-columns:repeat(2,minmax(0,1fr))}.grid3{grid-template-columns:1fr 1fr}.quickgrid{grid-template-columns:1fr 1fr}}
+.navbadge{margin-left:auto;min-width:22px;height:22px;padding:0 6px;border-radius:999px;display:inline-flex;align-items:center;justify-content:center;font-size:10px;font-weight:900;line-height:1;color:#fff;box-shadow:0 0 0 2px #0b1020;animation:badgeIn .2s ease}.navbadge[hidden]{display:none!important}.navbadge.danger{background:linear-gradient(135deg,#ff405f,#ff1744);box-shadow:0 0 12px #ff174455,0 0 0 2px #0b1020}.navbadge.seen{background:linear-gradient(135deg,#d9e2f0aa,#9eabc088);color:#263248;box-shadow:inset 0 1px 4px #ffffff88,0 0 0 2px #0b1020;animation:none}.navbadge.pending{background:linear-gradient(135deg,#ffbd52,#ff8a28);color:#251200;box-shadow:0 0 12px #ffad4244,0 0 0 2px #0b1020}.nav{gap:11px}.navtext{flex:1;text-align:left}@keyframes badgeIn{from{transform:scale(.65);opacity:.4}to{transform:scale(1);opacity:1}}@media(max-width:1050px){.layout{grid-template-columns:210px minmax(0,1fr)}.cards{grid-template-columns:repeat(2,minmax(0,1fr))}.grid3{grid-template-columns:1fr 1fr}.quickgrid{grid-template-columns:1fr 1fr}}
 @media(max-width:760px){.layout{grid-template-columns:1fr}aside{position:relative;height:auto;padding:14px}.navlabel,.sidebottom,.sub{display:none}.navlist{display:flex;overflow:auto;gap:5px;margin-top:14px}.nav{min-width:max-content;width:auto;margin:0;padding:10px}.navtitle{display:none}header{position:relative;padding:15px}.content{padding:14px}.grid2,.grid3{grid-template-columns:1fr}.policygrid{grid-template-columns:1fr}.cards{gap:9px}.metric{padding:14px}.value{font-size:24px}.pagetitle h1{font-size:22px}}
 </style></head><body>
 <div class="layout"><aside><div class="brand"><div class="brandmark">IW</div><div><strong>INSIDER<span>WATCH</span></strong></div></div><div class="sub">SECURITY OPERATIONS CENTER</div>
 <div class="navtitle">MONITORING</div><div class="navlist">
 <button class="nav active" data-page="overview"><span class="ico">◈</span>Overview</button>
 <button class="nav" data-page="fileaccess"><span class="ico">▤</span><span class="navtext">File access</span><span class="navbadge danger" id="fileDeniedBadge" hidden>0</span></button>
-<button class="nav" data-page="behavior"><span class="ico">⌁</span>Behaviour analysis</button>
+<button class="nav" data-page="behavior"><span class="ico">⌁</span>Behaviour analysis</button><button class="nav" data-page="threats"><span class="ico">⚠</span>Threat monitoring <span class="navbadge danger" id="threatActiveBadge" hidden>0</span></button>
 <button class="nav" data-page="employees"><span class="ico">♙</span>Employees & devices</button>
 <button class="nav" data-page="approvals"><span class="ico">✓</span><span class="navtext">Login approvals</span><span class="navbadge pending" id="loginPendingBadge" hidden>0</span></button>
 <button class="nav" data-page="policy"><span class="ico">⬡</span>Policies & testing</button>
 </div><div class="navtitle">QUICK LINKS</div><div class="sidebottom"><span class="dot"></span>Local monitoring engine<br>SQLite event storage<br><a href="/company">↗ Company website</a><br><a href="/employee">↗ Employee portal</a><br><br><span id="sideHealth">Checking service…</span></div></aside>
 <main><header><div><b>SECURITY OPERATIONS / <span id="headerSection">OVERVIEW</span></b><div class="muted">Employee file activity · access governance · behavioural signals</div></div><div class="headright"><span class="statuspill"><span class="dot"></span>ENGINE ONLINE</span><span class="muted" id="clock"></span><button onclick="refreshAll()">↻ Refresh</button></div></header>
 <div class="content">
-<section class="page active" id="page-overview"><div class="pagetitle"><div><span class="eyebrow">LIVE SECURITY SNAPSHOT</span><h1>Threat intelligence overview</h1><p>Monitor document access, policy enforcement and activity patterns from one workspace.</p></div><div class="actions"><button class="primary" onclick="demo()">＋ Generate demo activity</button><button onclick="location.href='/api/export'">↓ Export CSV</button></div></div>
+<section class="page active" id="page-overview"><div class="pagetitle"><div><span class="eyebrow">LIVE SECURITY SNAPSHOT</span><h1>Threat intelligence overview</h1><p>Monitor document access, policy enforcement and activity patterns from one workspace.</p></div><div class="actions"><button class="primary" onclick="demo()">＋ Generate demo activity</button><button onclick="location.href='/api/export'">↓ Export all history CSV</button><button onclick="location.href='/api/history/export'">↓ Archived history CSV</button></div></div>
 <div class="cards"><div class="metric" style="--glow:var(--cyan)"><div class="label">TOTAL RECORDED EVENTS</div><div class="value cyan" id="total">0</div><small>Latest 1,000 records available to summary</small></div><div class="metric" style="--glow:var(--purple)"><div class="label">ACTIVITY · LAST 24 HOURS</div><div class="value purple" id="events24">0</div><small>Allowed and denied events</small></div><div class="metric" style="--glow:var(--red)"><div class="label">DENIED ACCESS · 24H</div><div class="value red" id="denied">0</div><small>Policy blocks and rejected requests</small></div><div class="metric" style="--glow:var(--green)"><div class="label">ALLOWED ACCESS · 24H</div><div class="value green" id="allowed">0</div><small>Successful logged access checks</small></div></div>
 <div class="grid2"><div class="panel"><h2>Access activity by hour</h2><p class="desc">Events from the last 24 hours, grouped by local hour.</p><div id="hourChart"></div></div><div class="panel"><h2>Activity by employee batch</h2><p class="desc">Volume and denied requests by batch label.</p><div id="userChart"></div></div></div>
 <div class="panel"><div class="eventtop"><div><h2 style="margin-bottom:5px">Latest file access events</h2><p class="desc" style="margin:0">Newest records first. Select File access for the full event table.</p></div><button onclick="showPage('fileaccess')">View all file events →</button></div><div class="tablewrap"><table><thead><tr><th>TIME</th><th>EMPLOYEE / BATCH</th><th>FILE</th><th>RESULT</th><th>REASON / CONTEXT</th></tr></thead><tbody id="topEvents"><tr><td colspan="5">Loading events…</td></tr></tbody></table></div></div>
 <div class="grid2"><div class="panel"><h2>Priority behaviour signals</h2><div id="overviewAlerts" class="empty">Analysing events…</div></div><div class="panel"><h2>System shortcuts</h2><div class="quickgrid"><div class="quick"><b>File access</b><span>Review every recorded file event.</span><p><a href="#" onclick="showPage('fileaccess');return false">Open section ↗</a></p></div><div class="quick"><b>Behaviour</b><span>See repeated denials and unusual patterns.</span><p><a href="#" onclick="showPage('behavior');return false">Open section ↗</a></p></div><div class="quick"><b>Approvals</b><span>Review employee login requests.</span><p><a href="#" onclick="showPage('approvals');return false">Open section ↗</a></p></div></div></div></div>
 </section>
-<section class="page" id="page-fileaccess"><div class="pagetitle"><div><span class="eyebrow">AUDIT TRAIL</span><h1>Employee file access</h1><p>Review file name, timestamp, employee/batch, outcome, and recorded reason for each event.</p></div><div class="actions"><button onclick="loadEvents()">↻ Refresh events</button><button onclick="location.href='/api/export'">↓ Export CSV</button></div></div>
+<section class="page" id="page-fileaccess"><div class="pagetitle"><div><span class="eyebrow">AUDIT TRAIL</span><h1>Employee file access</h1><p>Review file name, timestamp, employee/batch, outcome, and recorded reason for the last 24 hours. Older events are safely archived.</p></div><div class="actions"><button onclick="loadEvents()">↻ Refresh events</button><button onclick="location.href='/api/export'">↓ Export CSV</button></div></div>
 <div class="cards"><div class="metric"><div class="label">EVENTS SHOWN</div><div class="value cyan" id="shownEvents">0</div></div><div class="metric"><div class="label">UNIQUE FILES</div><div class="value purple" id="uniqueFiles">0</div></div><div class="metric"><div class="label">USERS / BATCHES</div><div class="value" id="uniqueUsers">0</div></div><div class="metric"><div class="label">DENIED IN CURRENT VIEW</div><div class="value red" id="viewDenied">0</div></div></div>
-<div class="panel"><div class="eventtop"><div><h2>Complete recent access log</h2><p class="desc" style="margin:0">The database records batch ID rather than a person's full name. Reasons may include [REMOTE], [DEMO], or [DASHBOARD TEST].</p></div><div class="formrow"><input class="search" id="eventSearch" placeholder="Search user, file, reason…" oninput="renderEvents()"><select id="resultFilter" onchange="renderEvents()"><option value="ALL">All outcomes</option><option value="ALLOWED">Allowed</option><option value="DENIED">Denied</option></select></div></div><div class="tablewrap"><table><thead><tr><th>EVENT ID</th><th>TIMESTAMP</th><th>EMPLOYEE / BATCH</th><th>FILE / RESOURCE</th><th>RESULT</th><th>REASON / ACTION CONTEXT</th></tr></thead><tbody id="allEvents"><tr><td colspan="6">Loading…</td></tr></tbody></table></div><div class="sectionhint">This table shows recorded events returned by the existing /api/logs endpoint (up to 500 rows).</div></div></section>
+<div class="panel"><div class="eventtop"><div><h2>Complete recent access log</h2><p class="desc" style="margin:0">The database records batch ID rather than a person's full name. Reasons may include [REMOTE], [DEMO], or [DASHBOARD TEST].</p></div><div class="formrow"><input class="search" id="eventSearch" placeholder="Search user, file, reason…" oninput="renderEvents()"><select id="resultFilter" onchange="renderEvents()"><option value="ALL">All outcomes</option><option value="ALLOWED">Allowed</option><option value="DENIED">Denied</option></select></div></div><div class="tablewrap"><table><thead><tr><th>EVENT ID</th><th>TIMESTAMP</th><th>EMPLOYEE / BATCH</th><th>FILE / RESOURCE</th><th>RESULT</th><th>REASON / ACTION CONTEXT</th></tr></thead><tbody id="allEvents"><tr><td colspan="6">Loading…</td></tr></tbody></table></div><div class="sectionhint">This table shows events from the last 24 hours only (up to 500 rows). Older events are moved to the local history folder and remain available through the archived history export.</div></div></section>
 <section class="page" id="page-behavior"><div class="pagetitle"><div><span class="eyebrow">PATTERN REVIEW</span><h1>Behaviour analysis</h1><p>Rule-based indicators derived from logged events. Indicators are for review and are not proof of malicious intent.</p></div><button onclick="refreshAll()">↻ Recalculate</button></div><div class="cards"><div class="metric"><div class="label">REPEATED DENIAL GROUPS</div><div class="value red" id="repeatDenials">0</div><small>Batch with 3+ denied events in visible log</small></div><div class="metric"><div class="label">MOST REQUESTED FILE</div><div class="value cyan" id="topFile" style="font-size:18px">—</div><small id="topFileCount">No events yet</small></div><div class="metric"><div class="label">DENIAL RATE</div><div class="value amber" id="denialRate">0%</div><small>Within returned event history</small></div><div class="metric"><div class="label">AFTER-HOURS EVENTS</div><div class="value purple" id="afterHours">0</div><small>Local time before 08:00 or from 20:00</small></div></div>
 <div class="grid2"><div class="panel"><h2>Indicators requiring review</h2><p class="desc">Generated from event counts and timestamps; verify context with the employee or system owner.</p><div id="behaviorAlerts" class="empty">Analysing…</div></div><div class="panel"><h2>File request concentration</h2><p class="desc">Which resources appear most often in the returned event log.</p><div id="fileRanking"></div></div></div>
-<div class="grid2"><div class="panel"><h2>Per-batch activity profile</h2><div class="tablewrap"><table><thead><tr><th>BATCH</th><th>EVENTS</th><th>DENIED</th><th>DENIAL RATE</th><th>UNIQUE FILES</th></tr></thead><tbody id="batchAnalysis"></tbody></table></div></div><div class="panel"><h2>How to interpret the signals</h2><div class="callout"><b>Repeated denials:</b> may indicate a permissions mismatch, testing, or attempted access beyond clearance.<br><br><b>After-hours activity:</b> is only a time-based indicator; shifts, timezone settings and remote work can explain it.<br><br><b>High-volume file access:</b> may reflect normal assigned work. Correlate with approved duties and additional logs before taking action.<br><br><b>Data limits:</b> current event schema stores batch labels (A/B/C), file/resource, result, reason and timestamp—not verified employee names, IP addresses, download counts or file contents.</div></div></div></section>
+<div class="grid2"><div class="panel"><h2>Per-batch activity profile</h2><div class="tablewrap"><table><thead><tr><th>BATCH</th><th>EVENTS</th><th>DENIED</th><th>DENIAL RATE</th><th>UNIQUE FILES</th></tr></thead><tbody id="batchAnalysis"></tbody></table></div></div><div class="panel"><h2>How to interpret the signals</h2><div class="callout"><b>Repeated denials:</b> may indicate a permissions mismatch, testing, or attempted access beyond clearance.<br><br><b>After-hours activity:</b> is only a time-based indicator; shifts, timezone settings and remote work can explain it.<br><br><b>High-volume file access:</b> may reflect normal assigned work. Correlate with approved duties and additional logs before taking action.<br><br><b>Data limits:</b> events include employee ID when authenticated, batch, resource, result, reason, timestamp, server-observed peer IP and browser user-agent. They do not reveal a verified legal name, Windows process activity, bytes downloaded or file contents.</div></div></div></section>
+<section class="page" id="page-threats"><div class="pagetitle"><div><span class="eyebrow">ADAPTIVE THREAT RESPONSE</span><h1>Threat detection & active monitoring</h1><p>Three denied attempts within a rolling two-minute window activate persistent monitoring. Only an administrator can clear it.</p></div><button onclick="loadThreatMonitors()">↻ Refresh monitors</button></div><div class="cards"><div class="metric"><div class="label">ACTIVE MONITORS</div><div class="value red" id="activeThreatCount">0</div><small>Remain active until administrator clearance</small></div><div class="metric"><div class="label">ESCALATION WINDOW</div><div class="value cyan">120s</div><small>Rolling two-minute attempt window</small></div><div class="metric"><div class="label">ACTIVATION THRESHOLD</div><div class="value amber">3</div><small>Denied attempts within the window</small></div><div class="metric"><div class="label">RESPONSE</div><div class="value purple" style="font-size:18px">Persistent</div><small>Live application activity is recorded</small></div></div><div class="panel"><h2>Recent threat indicators & active monitors</h2><p class="desc">The system records activity that passes through the employee portal and authenticated device APIs. It does not inspect unrelated Windows activity.</p><div class="tablewrap"><table><thead><tr><th>SUBJECT</th><th>BATCH</th><th>THREAT</th><th>ATTEMPTS</th><th>LAST RESTRICTED FILE</th><th>LAST ATTEMPT</th><th>IP OBSERVED</th><th>ACTION</th></tr></thead><tbody id="threatMonitorRows"><tr><td colspan="8" class="empty">No recent threat indicators or active monitors.</td></tr></tbody></table></div></div><div class="panel" style="margin-top:14px"><h2>Live activity for active monitors</h2><div id="threatActivityFeed" class="empty">No recent threat indicators or active monitoring activity.</div></div><div class="callout" style="margin-top:14px">Threat levels are behavioural indicators, not proof of intent. Access remains denied by the existing clearance rules. Administrator clearance ends intensive monitoring but does not erase the audit history.</div></section>
 <section class="page" id="page-employees"><div class="pagetitle"><div><span class="eyebrow">IDENTITY & ENDPOINTS</span><h1>Employees & devices</h1><p>Review demo employee batches, clearance levels, recent activity, and heartbeat status.</p></div><button onclick="loadDevices()">↻ Refresh devices</button></div><div class="grid3"><div class="employee-card"><div class="avatar">A</div><div><b>Batch A · EMP001</b><p>Level 3 · Top clearance · Read / write / modify across configured files</p></div></div><div class="employee-card"><div class="avatar">B</div><div><b>Batch B · EMP002</b><p>Level 2 · Medium clearance · Basic modify, medium read</p></div></div><div class="employee-card"><div class="avatar">C</div><div><b>Batch C · EMP003</b><p>Level 1 · Basic clearance · Basic read-only access</p></div></div></div><div class="grid2"><div class="panel"><h2>Connected device heartbeat</h2><p class="desc">A device is online when a valid configured token has sent a heartbeat in the last 30 seconds.</p><div class="tablewrap"><table><thead><tr><th>BATCH</th><th>STATUS</th><th>LAST SEEN</th></tr></thead><tbody id="deviceRows"><tr><td colspan="3">Loading…</td></tr></tbody></table></div><p class="sectionhint">No heartbeat means unknown/offline, not necessarily a failed employee login.</p></div><div class="panel"><h2>Recent activity by batch</h2><div class="tablewrap"><table><thead><tr><th>BATCH</th><th>RECENT EVENTS</th><th>DENIED</th><th>LAST EVENT</th></tr></thead><tbody id="employeeActivity"></tbody></table></div></div></div></section>
 <section class="page" id="page-approvals"><div class="pagetitle"><div><span class="eyebrow">ACCESS GOVERNANCE</span><h1>Employee login approvals</h1><p>Review pending employee requests and approve or reject access to the employee portal.</p></div><button onclick="loadLoginRequests()">↻ Refresh requests</button></div><div class="panel"><h2>Pending and recent requests</h2><p class="desc">Approval decisions are handled by the existing login request API.</p><div id="loginRequests" class="empty">Loading requests…</div></div></section>
-<section class="page" id="page-policy"><div class="pagetitle"><div><span class="eyebrow">CONTROL CENTER</span><h1>Policies & access testing</h1><p>Check the configured clearance rules and create a logged test event.</p></div></div><div class="panel"><h2>Access test console</h2><p class="desc">Tests use the existing server-side access evaluation and are logged as dashboard test events.</p><div class="formrow"><select id="testUser"><option value="A">Batch A · Level 3</option><option value="B">Batch B · Level 2</option><option value="C">Batch C · Level 1</option></select><select id="testFile"><option>confidential.txt</option><option>security_audit.txt</option><option>financial_summary.txt</option><option>medium.txt</option><option>project_status.txt</option><option>it_guidelines.txt</option><option>basic.txt</option><option>company_policies.txt</option><option>employee_handbook.txt</option></select><button id="testButton" class="primary" onclick="testAccess()">Run access test</button></div><div id="testResult" class="sectionhint">No test run in this session.</div></div><div class="panel" style="margin-top:14px"><h2>Configured clearance policy</h2><div class="policygrid"><div class="policy"><h3 class="cyan">BATCH A · LEVEL 3</h3><p>Basic files: read / write / modify<br>Medium files: read / write / modify<br>Confidential files: read / write / modify</p></div><div class="policy"><h3 class="purple">BATCH B · LEVEL 2</h3><p>Basic files: read / write / modify<br>Medium files: read only<br>Confidential files: no access</p></div><div class="policy"><h3 class="amber">BATCH C · LEVEL 1</h3><p>Basic files: read only<br>Medium files: no access<br>Confidential files: no access</p></div></div><p class="sectionhint">Policy values reflect the FILE_PERMISSIONS configuration in app.py. The server remains responsible for enforcing access.</p></div><div class="panel" style="margin-top:14px"><h2>Monitoring data notes</h2><div class="callout">The dashboard can only display information the application records. To track real person's name, device IP, session ID, bytes downloaded, or exact read/write/modify actions, those fields must be added to the backend event schema and logging calls. This dashboard does not invent those details.</div></div></section>
+<section class="page" id="page-policy"><div class="pagetitle"><div><span class="eyebrow">CONTROL CENTER</span><h1>Policies & access testing</h1><p>Check the configured clearance rules and create a logged test event.</p></div></div><div class="panel"><h2>Access test console</h2><p class="desc">Tests use the existing server-side access evaluation and are logged as dashboard test events.</p><div class="formrow"><select id="testUser"><option value="A">Batch A · Level 3</option><option value="B">Batch B · Level 2</option><option value="C">Batch C · Level 1</option></select><select id="testFile"><option>confidential.txt</option><option>security_audit.txt</option><option>financial_summary.txt</option><option>medium.txt</option><option>project_status.txt</option><option>it_guidelines.txt</option><option>basic.txt</option><option>company_policies.txt</option><option>employee_handbook.txt</option></select><button id="testButton" class="primary" onclick="testAccess()">Run access test</button></div><div id="testResult" class="sectionhint">No test run in this session.</div></div><div class="panel" style="margin-top:14px"><h2>Configured clearance policy</h2><div class="policygrid"><div class="policy"><h3 class="cyan">BATCH A · LEVEL 3</h3><p>Basic files: read / write / modify<br>Medium files: read / write / modify<br>Confidential files: read / write / modify</p></div><div class="policy"><h3 class="purple">BATCH B · LEVEL 2</h3><p>Basic files: read / write / modify<br>Medium files: read only<br>Confidential files: no access</p></div><div class="policy"><h3 class="amber">BATCH C · LEVEL 1</h3><p>Basic files: read only<br>Medium files: no access<br>Confidential files: no access</p></div></div><p class="sectionhint">Policy values reflect the FILE_PERMISSIONS configuration in app.py. The server remains responsible for enforcing access.</p></div><div class="panel" style="margin-top:14px"><h2>Monitoring data notes</h2><div class="callout">The application records employee ID when authenticated, batch, file/resource, result, reason, timestamp, server-observed peer IP and browser user-agent. It does not identify a verified legal name, inspect unrelated Windows processes, measure bytes downloaded, or capture file contents. Monitoring covers activity routed through InsiderWatch.</div></div></section>
 <footer>InsiderWatch Security Operations Center · Rule-based indicators are decision support, not a determination of intent.</footer>
 </div></main></div>
 <script>
 const $=id=>document.getElementById(id);let cachedEvents=[];let summaryData={};
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 async function getJSON(url,options){const r=await fetch(url,options);const d=await r.json();if(!r.ok)throw new Error(d.error||d.reason||('HTTP '+r.status));return d;}
-function showPage(name){document.querySelectorAll('.page').forEach(p=>p.classList.toggle('active',p.id==='page-'+name));document.querySelectorAll('.nav[data-page]').forEach(n=>n.classList.toggle('active',n.dataset.page===name));const label={overview:'OVERVIEW',fileaccess:'FILE ACCESS AUDIT',behavior:'BEHAVIOUR ANALYSIS',employees:'EMPLOYEES & DEVICES',approvals:'LOGIN APPROVALS',policy:'POLICIES & TESTING'};$('headerSection').textContent=label[name]||name.toUpperCase();if(name==='fileaccess')renderEvents();if(name==='behavior')renderBehavior();if(name==='employees')loadDevices();if(name==='approvals')loadLoginRequests();}
+function showPage(name){document.querySelectorAll('.page').forEach(p=>p.classList.toggle('active',p.id==='page-'+name));document.querySelectorAll('.nav[data-page]').forEach(n=>n.classList.toggle('active',n.dataset.page===name));const label={overview:'OVERVIEW',fileaccess:'FILE ACCESS AUDIT',behavior:'BEHAVIOUR ANALYSIS',threats:'THREAT MONITORING',employees:'EMPLOYEES & DEVICES',approvals:'LOGIN APPROVALS',policy:'POLICIES & TESTING'};$('headerSection').textContent=label[name]||name.toUpperCase();if(name==='fileaccess'){renderEvents();const maxId=cachedEvents.reduce((m,e)=>Math.max(m,Number(e.id)||0),0);localStorage.setItem('insiderwatch_file_access_seen_event_id',String(maxId));const badge=$('fileDeniedBadge');badge.classList.remove('danger');badge.classList.add('seen');}if(name==='behavior')renderBehavior();if(name==='threats')loadThreatMonitors();if(name==='employees')loadDevices();if(name==='approvals')loadLoginRequests();}
 document.querySelectorAll('.nav[data-page]').forEach(n=>n.addEventListener('click',()=>showPage(n.dataset.page)));
 function fmtTime(s){return esc(String(s||'').replace('T',' ').slice(0,19))}
-function eventRow(e,detail=false){return `<tr>${detail?`<td>${esc(e.id)}</td>`:''}<td>${fmtTime(e.timestamp)}</td><td><b>${esc(e.user_id)}</b><div class="sectionhint">Batch / clearance label</div></td><td><b>${esc(e.resource)}</b></td><td><span class="badge ${esc(e.result)}">${esc(e.result)}</span></td><td>${esc(e.reason||'No reason recorded')}</td></tr>`}
+function eventRow(e,detail=false){return `<tr>${detail?`<td>${esc(e.id)}</td>`:''}<td>${fmtTime(e.timestamp)}</td><td><b>${esc(e.employee_id||e.user_id)}</b><div class="sectionhint">Batch ${esc(e.user_id)}</div></td><td><b>${esc(e.resource)}</b></td><td><span class="badge ${esc(e.result)}">${esc(e.result)}</span></td><td>${esc(e.reason||'No reason recorded')}</td></tr>`}
 async function refreshAll(){try{const [sum,events]=await Promise.all([getJSON('/api/summary'),getJSON('/api/logs?limit=500')]);summaryData=sum;cachedEvents=Array.isArray(events)?events:[];$('total').textContent=sum.total??cachedEvents.length;$('events24').textContent=sum.events24??0;$('denied').textContent=sum.denied??0;$('allowed').textContent=sum.allowed??0;$('hourChart').innerHTML=(sum.hourly||[]).map(h=>`<div class="barrow"><div class="barlabel"><span>${esc(h.hour)}</span><span>Denied ${h.denied} · Allowed ${h.allowed}</span></div><div class="bar"><span style="width:${Math.min(100,(h.denied+h.allowed)*8)}%"></span></div></div>`).join('')||'<div class="empty">No activity recorded yet.</div>';$('userChart').innerHTML=(sum.users||[]).map(u=>`<div class="barrow"><div class="barlabel"><span>Batch ${esc(u.user)}</span><span>${u.total} events · ${u.denied} denied</span></div><div class="bar"><span style="width:${Math.min(100,u.total*10)}%"></span></div></div>`).join('');$('topEvents').innerHTML=cachedEvents.length?cachedEvents.slice(0,12).map(e=>eventRow(e)).join(''):'<tr><td colspan="5" class="empty">No file access events recorded yet. Use the access test or employee portal to generate activity.</td></tr>';renderEvents();renderBehavior();renderEmployeeActivity();renderOverviewAlerts();$('sideHealth').textContent='API connected · '+cachedEvents.length+' events loaded';}catch(e){console.error(e);$('sideHealth').textContent='API error: '+e.message;}}
 async function loadEvents(){await refreshAll();}
 function renderEvents(){const q=($('eventSearch')?.value||'').toLowerCase();const f=$('resultFilter')?.value||'ALL';const arr=cachedEvents.filter(e=>(f==='ALL'||e.result===f)&&[e.user_id,e.resource,e.result,e.reason,e.timestamp,e.id].join(' ').toLowerCase().includes(q));$('shownEvents').textContent=arr.length;$('uniqueFiles').textContent=new Set(arr.map(e=>e.resource)).size;$('uniqueUsers').textContent=new Set(arr.map(e=>e.user_id)).size;$('viewDenied').textContent=arr.filter(e=>e.result==='DENIED').length;$('allEvents').innerHTML=arr.length?arr.map(e=>eventRow(e,true)).join(''):'<tr><td colspan="6" class="empty">No matching events.</td></tr>';}
 function analyze(){const byUser={},byFile={},after=[];cachedEvents.forEach(e=>{const u=e.user_id||'Unknown',f=e.resource||'Unknown';byUser[u]??={total:0,denied:0,files:new Set(),last:'',after:0};byUser[u].total++;if(e.result==='DENIED')byUser[u].denied++;byUser[u].files.add(f);if(!byUser[u].last||String(e.timestamp)>byUser[u].last)byUser[u].last=e.timestamp;byFile[f]=(byFile[f]||0)+1;const d=new Date(e.timestamp);if(!isNaN(d)&& (d.getHours()<8||d.getHours()>=20)){after.push(e);byUser[u].after++;}});return {byUser,byFile,after};}
 function renderBehavior(){const {byUser,byFile,after}=analyze();const users=Object.entries(byUser);const deniedTotal=cachedEvents.filter(e=>e.result==='DENIED').length;$('repeatDenials').textContent=users.filter(([u,x])=>x.denied>=3).length;$('denialRate').textContent=(cachedEvents.length?Math.round(deniedTotal/cachedEvents.length*100):0)+'%';$('afterHours').textContent=after.length;const top=Object.entries(byFile).sort((a,b)=>b[1]-a[1])[0];$('topFile').textContent=top?top[0]:'—';$('topFileCount').textContent=top?top[1]+' events in returned log':'No events yet';$('fileRanking').innerHTML=Object.entries(byFile).sort((a,b)=>b[1]-a[1]).slice(0,8).map(([f,n])=>`<div class="barrow"><div class="barlabel"><span>${esc(f)}</span><b>${n}</b></div><div class="bar"><span style="width:${Math.min(100,n/Math.max(1,...Object.values(byFile))*100)}%"></span></div></div>`).join('')||'<div class="empty">No file activity to rank.</div>';$('batchAnalysis').innerHTML=users.map(([u,x])=>`<tr><td><b>${esc(u)}</b></td><td>${x.total}</td><td class="${x.denied?'red':'green'}">${x.denied}</td><td>${Math.round(x.denied/Math.max(1,x.total)*100)}%</td><td>${x.files.size}</td></tr>`).join('')||'<tr><td colspan="5" class="empty">No events yet.</td></tr>';const alerts=[];users.forEach(([u,x])=>{if(x.denied>=3)alerts.push({level:x.denied>=5?'HIGH':'REVIEW',user:u,msg:`${x.denied} denied attempts across ${x.files.size} distinct file(s). Check whether this reflects normal work or a permission mismatch.`});if(x.after>=3)alerts.push({level:'REVIEW',user:u,msg:`${x.after} events occurred outside the dashboard's local 08:00–20:00 reference window. Confirm timezone and shift context.`});});$('behaviorAlerts').innerHTML=alerts.length?alerts.map(a=>`<div class="alert ${a.level==='REVIEW'?'med':''}"><b class="${a.level==='HIGH'?'red':'amber'}">${esc(a.level)} · ${esc(a.user)}</b><div>${esc(a.msg)}</div></div>`).join(''):'<div class="callout">No repeated-denial or repeated after-hours indicator met the current rule thresholds in the returned log. This does not guarantee that activity is risk-free.</div>';}
-function renderOverviewAlerts(){const s=summaryData||{};const alerts=s.alerts||[];$('overviewAlerts').innerHTML=alerts.length?alerts.slice(0,5).map(a=>`<div class="alert ${a.severity==='HIGH'?'':'med'}"><b class="${a.severity==='HIGH'?'red':'amber'}">${esc(a.severity)} · Batch ${esc(a.user)}</b><div>${esc(a.message)} · ${a.count} denied event(s) in 24 hours.</div></div>`).join(''):'<div class="empty">No repeated-denial alert currently reported by the summary API.</div>';}
+function renderOverviewAlerts(){const s=summaryData||{};const alerts=s.alerts||[];const threats=s.threat_indicators||[];const threatCards=threats.slice(0,5).map(t=>{const level=t.threat_level||'LOW';const who=t.employee_id||t.subject_id||('Batch '+t.batch_id);const active=Number(t.active)===1;const msg=active?'Potential insider threat detected. Intensive monitoring is active until administrator clearance.':(Number(t.attempts_in_window??t.rolling_attempts)>=2?'Repeated unauthorized access detected within the rolling 2-minute window.':'First unauthorized access attempt detected; this may be accidental.');return `<div class="alert ${level==='LOW'?'med':''}"><b class="${level==='HIGH'||level==='CRITICAL'?'red':'amber'}">${esc(level)} · ${esc(who)}</b><div>${esc(msg)} Attempts: ${Number(t.attempts_in_window??t.rolling_attempts??0)} · File: ${esc(t.last_resource||'—')} · Last attempt: ${fmtTime(t.last_attempt_at)}</div></div>`;}).join('');const oldCards=alerts.slice(0,3).map(a=>`<div class="alert ${a.severity==='HIGH'?'':'med'}"><b class="${a.severity==='HIGH'?'red':'amber'}">${esc(a.severity)} · Batch ${esc(a.user)}</b><div>${esc(a.message)} · ${a.count} denied event(s) in 24 hours.</div></div>`).join('');$('overviewAlerts').innerHTML=(threatCards+oldCards)||'<div class="empty">No recent adaptive threat indicators or repeated-denial alerts.</div>'; }
 function renderEmployeeActivity(){const {byUser}=analyze();$('employeeActivity').innerHTML=Object.entries(byUser).map(([u,x])=>`<tr><td><b>${esc(u)}</b></td><td>${x.total}</td><td class="${x.denied?'red':'green'}">${x.denied}</td><td>${fmtTime(x.last)}</td></tr>`).join('')||'<tr><td colspan="4" class="empty">No activity recorded.</td></tr>';}
 async function loadDevices(){try{const d=await getJSON('/api/devices');$('deviceRows').innerHTML=d.map(x=>`<tr><td><b>Batch ${esc(x.device)}</b></td><td><span class="badge ${x.online?'ALLOWED':'DENIED'}">${x.online?'ONLINE':'OFFLINE / UNKNOWN'}</span></td><td>${x.last_seen?fmtTime(x.last_seen):'No heartbeat recorded'}</td></tr>`).join('');}catch(e){$('deviceRows').innerHTML=`<tr><td colspan="3">${esc(e.message)}</td></tr>`;}}
 async function testAccess(){const b=$('testButton');b.disabled=true;try{const d=await getJSON('/api/access',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user:$('testUser').value,file:$('testFile').value})});$('testResult').innerHTML=`<span class="badge ${esc(d.result)}">${esc(d.result)}</span> ${esc(d.user)} → ${esc(d.file)} · ${esc(d.reason)}`;await refreshAll();}catch(e){$('testResult').textContent='Test result: '+e.message;await refreshAll();}finally{b.disabled=false;}}
 async function demo(){try{const d=await getJSON('/api/demo',{method:'POST'});await refreshAll();alert(d.message+' ('+d.count+' events).');}catch(e){alert('Demo failed: '+e.message);}}
 async function loadLoginRequests(){const host=$('loginRequests');try{const items=await getJSON('/api/admin/login-requests');if(!items.length){host.innerHTML='<div class="empty">No pending login requests.</div>';return;}host.innerHTML=items.map(item=>`<div class="employee-card" style="margin:10px 0"><div class="avatar">${esc(item.batch_id)}</div><div style="flex:1"><b>Employee ${esc(item.employee_id)} · Batch ${esc(item.batch_id)}</b><p>Requested: ${esc(item.requested_at)} · Status: ${esc(item.status||'PENDING')}</p></div><div class="actions"><button class="primary" onclick="reviewEmployeeRequest(${Number(item.id)},'APPROVE')">Approve</button><button onclick="reviewEmployeeRequest(${Number(item.id)},'REJECT')">Reject</button></div></div>`).join('');}catch(e){host.innerHTML='<div class="empty">Unable to load requests. '+esc(e.message)+'</div>';}}
 async function reviewEmployeeRequest(id,decision){try{const d=await getJSON('/api/admin/login-requests/'+id,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({decision})});alert('Login request '+String(d.status||decision).toLowerCase()+'.');await loadLoginRequests();await refreshAll();}catch(e){alert('Could not review request: '+e.message);}}
+async function loadThreatMonitors(){
+  const body=$('threatMonitorRows'),feed=$('threatActivityFeed');
+  try{
+    const items=await getJSON('/api/admin/threats');
+    const activeCount=items.filter(x=>Number(x.active)===1).length;
+    $('activeThreatCount').textContent=activeCount;
+    const badge=$('threatActiveBadge');badge.textContent=activeCount>99?'99+':String(activeCount);badge.hidden=activeCount===0;
+    if(!items.length){body.innerHTML='<tr><td colspan="8" class="empty">No active monitoring records.</td></tr>';feed.innerHTML='<div class="empty">No active monitoring activity.</div>';return;}
+    body.innerHTML=items.map(x=>`<tr><td><b>${esc(x.employee_id||x.subject_id)}</b><div class="sectionhint">${esc(x.subject_id)}</div></td><td>${esc(x.batch_id)}</td><td><span class="badge ${Number(x.active)===1?'DENIED':'ALLOWED'}">${esc(x.threat_level)}${Number(x.active)===1?' · ACTIVE':''}</span></td><td>${Number(x.attempts_in_window||0)}</td><td>${esc(x.last_resource||'—')}</td><td>${fmtTime(x.last_attempt_at)}</td><td>${esc(x.ip_address||'Not available')}</td><td>${Number(x.active)===1?`<button onclick="clearThreatMonitor('${encodeURIComponent(x.subject_id)}')">Clear monitoring</button>`:''}${x.employee_id? (Number(x.is_frozen)===1?`<span class="badge DENIED">ACCOUNT FROZEN</span><button class="primary" onclick="restoreEmployeeAccount('${encodeURIComponent(x.employee_id)}')">Restore after investigation</button>`:`<button onclick="freezeEmployeeAccount('${encodeURIComponent(x.employee_id)}')">Freeze account</button>`):'Employee account action unavailable'}</td></tr>`).join('');
+    feed.innerHTML=items.map(x=>`<div class="alert ${Number(x.active)===1?'':'med'}"><b class="${Number(x.active)===1?'red':'amber'}">${esc(x.employee_id||x.subject_id)} · ${esc(x.threat_level)}${Number(x.active)===1?' · INTENSIVE MONITORING ACTIVE':''}</b><div>Attempts in rolling window: ${Number(x.attempts_in_window||0)} · Activated: ${fmtTime(x.activated_at)||'Not activated'} · Last attempt: ${fmtTime(x.last_attempt_at)} · Last resource: ${esc(x.last_resource||'—')}</div><div class="sectionhint">${esc(x.last_activity_reason||'Threat indicator recorded.')} </div>${(x.recent_activity||[]).slice(0,6).map(a=>`<div class="sectionhint">${fmtTime(a.timestamp)} · ${esc(a.result)} · ${esc(a.resource)} · ${esc(a.reason||'')} · IP ${esc(a.ip_address||'n/a')} · ${esc(a.user_agent||'Unknown client')}</div>`).join('')}</div>`).join('');
+  }catch(e){body.innerHTML=`<tr><td colspan="8">${esc(e.message)}</td></tr>`;feed.textContent='Unable to load active monitoring activity.';}
+}
+async function clearThreatMonitor(subject){
+  const id=decodeURIComponent(subject);
+  if(!confirm('Clear intensive monitoring for '+id+'? Historical audit events will remain.'))return;
+  try{await getJSON('/api/admin/threats/'+encodeURIComponent(id)+'/clear',{method:'POST'});await loadThreatMonitors();await refreshAll();alert('Monitoring cleared for '+id+'.');}
+  catch(e){alert('Could not clear monitoring: '+e.message);}
+}
+
+async function freezeEmployeeAccount(encodedId){
+  const id=decodeURIComponent(encodedId);
+  const reason=prompt('Reason for freezing '+id+' (this will be recorded in the audit log):','Account frozen during security investigation');
+  if(reason===null)return;
+  try{
+    await getJSON('/api/admin/threats/'+encodeURIComponent(id)+'/freeze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reason})});
+    await loadThreatMonitors();await refreshAll();
+    alert(id+' is now frozen. Active portal sessions will be signed out and new login attempts will be blocked.');
+  }catch(e){alert('Could not freeze account: '+e.message);}
+}
+async function restoreEmployeeAccount(encodedId){
+  const id=decodeURIComponent(encodedId);
+  if(!confirm('Restore '+id+' only after the investigation is complete and the employee is cleared?'))return;
+  try{
+    await getJSON('/api/admin/threats/'+encodeURIComponent(id)+'/restore',{method:'POST'});
+    await loadThreatMonitors();await refreshAll();
+    alert(id+' account restored. The employee can submit a new login request.');
+  }catch(e){alert('Could not restore account: '+e.message);}
+}
+
 async function updateNotificationBadges(){
   const fileBadge=$('fileDeniedBadge');
   const loginBadge=$('loginPendingBadge');
@@ -1014,28 +1547,42 @@ async function updateNotificationBadges(){
       getJSON('/api/logs?limit=1000'),
       getJSON('/api/admin/login-requests')
     ]);
-    const deniedCount=(Array.isArray(events)?events:[]).filter(e=>
-      String(e.result||'').toUpperCase()==='DENIED'
-    ).length;
+    const rows=Array.isArray(events)?events:[];
+    const denied=rows.filter(e=>String(e.result||'').toUpperCase()==='DENIED');
+    const deniedCount=denied.length;
+    const maxEventId=rows.reduce((m,e)=>Math.max(m,Number(e.id)||0),0);
+    const seenKey='insiderwatch_file_access_seen_event_id';
+    let lastSeen=Number(localStorage.getItem(seenKey));
+    if(!Number.isFinite(lastSeen)){
+      lastSeen=maxEventId;
+      localStorage.setItem(seenKey,String(lastSeen));
+    }
+    const unseenCount=denied.filter(e=>(Number(e.id)||0)>lastSeen).length;
+    fileBadge.textContent=deniedCount>99?'99+':String(deniedCount);
+    fileBadge.hidden=deniedCount===0;
+    fileBadge.classList.toggle('danger',unseenCount>0);
+    fileBadge.classList.toggle('seen',unseenCount===0);
+    fileBadge.title=unseenCount>0?unseenCount+' new denied file-access notification(s) — open File access to mark as seen':deniedCount+' denied events; no unread notifications';
+    if(document.querySelector('.nav[data-page="fileaccess"]')?.classList.contains('active')){
+      localStorage.setItem(seenKey,String(maxEventId));
+      fileBadge.classList.remove('danger');fileBadge.classList.add('seen');
+      fileBadge.title=deniedCount+' denied events; notifications viewed';
+    }
     const pendingCount=(Array.isArray(requests)?requests:[]).filter(r=>
       String(r.status||'PENDING').toUpperCase()==='PENDING'
     ).length;
-    fileBadge.textContent=deniedCount>99?'99+':String(deniedCount);
-    fileBadge.hidden=deniedCount===0;
-    fileBadge.title=deniedCount+' denied file-access events in the latest 1000 recorded events';
     loginBadge.textContent=pendingCount>99?'99+':String(pendingCount);
     loginBadge.hidden=pendingCount===0;
     loginBadge.title=pendingCount+' login request(s) awaiting approval';
-    fileBadge.setAttribute('aria-label',deniedCount+' denied file access events');
+    fileBadge.setAttribute('aria-label',unseenCount+' unread denied file access notifications');
     loginBadge.setAttribute('aria-label',pendingCount+' pending login approvals');
   }catch(error){
     console.error('Notification badge refresh failed:',error);
-    // Keep last known counts visible if an API request temporarily fails.
   }
 }
 
 function tick(){ $('clock').textContent=new Date().toLocaleString(); }
-tick();setInterval(tick,1000);refreshAll();loadDevices();loadLoginRequests();updateNotificationBadges();setInterval(refreshAll,7000);setInterval(loadLoginRequests,10000);setInterval(updateNotificationBadges,7000);setInterval(loadDevices,15000);
+tick();setInterval(tick,1000);refreshAll();loadDevices();loadLoginRequests();loadThreatMonitors();updateNotificationBadges();setInterval(refreshAll,7000);setInterval(loadThreatMonitors,5000);setInterval(loadLoginRequests,10000);setInterval(updateNotificationBadges,7000);setInterval(loadDevices,15000);
 </script></body></html>
 """
 
@@ -1059,4 +1606,8 @@ def handle_error(exc):
 init_db()
 
 if __name__ == "__main__":
+    print("\nInsiderWatch is running:")
+    print("Admin Dashboard : http://127.0.0.1:5000/")
+    print("Company Website : http://127.0.0.1:5000/company")
+    print("Employee Login  : http://127.0.0.1:5000/employee\n")
     app.run(host="0.0.0.0", port=5000, debug=False)

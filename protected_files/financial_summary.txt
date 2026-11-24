@@ -1,3 +1,45 @@
-CONFIDENTIAL FINANCIAL SUMMARY
+NEXORA TECHNOLOGIES
+ILLUSTRATIVE MANAGEMENT FINANCIAL SUMMARY
+Document ID: NXT-FIN-019
+Version: 1.0
+Classification: CONFIDENTIAL | Restricted access
+Period: FY 2026-27 planning scenario
+Prepared for: Demonstration Management Review
 
-Demonstration-only financial record. Values are illustrative and are not real company financial data. Distribution is restricted.
+IMPORTANT NOTICE
+All figures below are fictional planning assumptions created solely for the InsiderWatch academic demonstration. They are not actual company accounts, audited results, forecasts or investment information.
+
+1. SAMPLE REVENUE PLAN
+Software engineering services: INR 48,00,000
+Cloud and DevOps services: INR 24,00,000
+Data and analytics projects: INR 18,00,000
+Security consulting: INR 10,00,000
+Illustrative total: INR 1,00,00,000
+
+2. SAMPLE OPERATING COST PLAN
+Employee and contractor costs: INR 52,00,000
+Cloud and software subscriptions: INR 10,00,000
+Training and certification: INR 3,00,000
+Office and administration: INR 8,00,000
+Contingency: INR 5,00,000
+Illustrative total: INR 78,00,000
+
+3. ILLUSTRATIVE OPERATING POSITION
+Sample planned operating surplus before tax and other adjustments: INR 22,00,000.
+This is a simple demonstration calculation and is not prepared under any accounting standard.
+
+4. FINANCIAL CONTROL CHECKLIST
+• Require documented approval for purchase commitments.
+• Separate request, approval and payment responsibilities.
+• Reconcile invoices against approved purchase records.
+• Restrict access to payroll and vendor information.
+• Review unusual transactions and retain supporting documentation.
+• Do not send financial files to personal email or storage.
+
+5. MANAGEMENT NOTES
+The planning scenario assumes project-based service revenue and a small technology-services operating model. Actual performance would depend on signed contracts, delivery costs, collections, taxes and other liabilities.
+
+Prepared by: Demonstration Finance Function
+Review status: Sample document — not approved for real-world use.
+
+All amounts, assumptions and business details are fictional. Do not use this document for real financial decisions.

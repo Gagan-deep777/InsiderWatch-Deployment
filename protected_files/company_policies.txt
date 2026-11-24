@@ -1,6 +1,47 @@
-NEXORA TECHNOLOGIES - COMPANY POLICIES
+NEXORA TECHNOLOGIES
+EMPLOYEE & INFORMATION SECURITY POLICIES
+Document ID: NXT-POL-010
+Version: 2.1
+Classification: BASIC | Internal
+Effective date: 01 October 2026
+Policy owner: Business Operations
 
-1. Treat colleagues respectfully.
-2. Use company systems for authorized work.
-3. Protect company information.
-4. Report suspected security issues promptly.
+1. PURPOSE
+These policies define the minimum expectations for using company systems, handling information and protecting colleagues, customers and business operations.
+
+2. ACCEPTABLE USE
+• Use company accounts and devices for authorised work.
+• Do not install unapproved software or disable endpoint protections.
+• Lock your screen whenever you leave your workstation.
+• Do not bypass access controls or attempt to access another employee's account.
+• Report lost devices, suspicious messages and unexpected access prompts promptly.
+
+3. IDENTITY AND ACCESS
+• Every employee must use an individual account; shared accounts are prohibited.
+• Passwords must not be shared, reused or stored in plain-text documents.
+• Multi-factor authentication must be enabled wherever supported.
+• Access is granted using least privilege and must be reviewed when duties change.
+• Managers must request access changes through the approved IT process.
+
+4. DATA CLASSIFICATION
+BASIC: General company information and approved internal guidance.
+MEDIUM: Internal project, operational and technical information.
+CONFIDENTIAL: Financial, security, customer-sensitive and restricted business records.
+Employees must use approved storage and sharing channels appropriate to the classification.
+
+5. INCIDENT REPORTING
+Report suspected phishing, malware, data loss, unauthorised access or account compromise to security@nexora.example. Include the time, affected system and a short description. Do not delete relevant evidence or investigate beyond your authorisation.
+
+6. REMOTE WORK
+Use approved secure connectivity. Avoid public or shared computers. Do not leave company devices unattended in public places. Report remote-access failures to IT rather than disabling security controls.
+
+7. RECORDS AND RETENTION
+Operational and security events are logged by the InsiderWatch demonstration system. The live File Access view displays the latest 24 hours; older event records are archived in the history database. Retention and deletion in a production company must follow its approved legal and records-management policy.
+
+8. POLICY BREACHES
+Suspected breaches are reviewed by the designated administrator and relevant manager. Temporary account restrictions may be applied while facts are established. Restoration requires an authorised decision and a recorded outcome.
+
+Approval: Demonstration policy approved by Nexora Operations.
+Review cycle: Every 12 months or after a material security change.
+
+All company names, policy owners, dates and processes here are illustrative demo content.
